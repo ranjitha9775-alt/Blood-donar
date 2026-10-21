@@ -143,9 +143,9 @@
         window.location.assign(returnUrl.href);
       } else if (data.user) {
         showAvailability(data.user);
-        if (registrationComplete) searchMessage.textContent = "Registration successful. Your account is ready, and you are signed in.";
+        if (registrationComplete) searchMessage.textContent = "Registration successful. You are now logged in.";
       } else {
-        showLogin();
+        showLogin(registrationComplete ? "Registration successful. Please log in to continue." : "");
       }
     })
     .catch(error => {

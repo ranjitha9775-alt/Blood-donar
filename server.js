@@ -781,10 +781,9 @@ app.post('/api/register', rateLimit(5, 15 * 60 * 1000), requireDatabase, async (
       );
     }
     await connection.commit();
-    setSessionCookie(res, userResult.insertId);
+    clearSessionCookie(res);
     res.status(201).json({
-      message: 'Account created. You are now logged in.',
-      user: { user_id: userResult.insertId, full_name: fullName.trim(), email, role }
+      message: 'Account created. Please log in.'
     });
   } catch (error) {
     if (connection) await connection.rollback().catch(() => {});

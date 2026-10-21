@@ -2,6 +2,12 @@
 
 LifeDrop is a student project demo. Donor availability, account profiles, donation-camp interest, and blood requests use a MySQL-backed API.
 
+## Open the website
+
+[**Open LifeDrop on this computer**](http://localhost:3002)
+
+This link works only when the LifeDrop server is running on your computer. It is not a public website URL; others cannot open your computer's `localhost` link. A public URL requires completing the hosting deployment below.
+
 ## Run the application
 
 1. Install Node.js and MySQL.
@@ -76,7 +82,7 @@ The app creates its tables on startup. The MySQL user needs permission to create
 
 ## Accounts and live donor availability
 
-- Donors and patients create accounts with an email address and password. Passwords are hashed before storage; successful registration logs the user in.
+- Donors and patients create accounts with an email address and password. Passwords are hashed before storage. After registration, the home page stays open and users may select Login when they are ready to sign in. Registration clears any existing session, so the new account is not logged in automatically.
 - Login is available at `/login`. Live availability search is visible only to logged-in accounts, and the API also enforces authentication.
 - A donor appears in search only after opting in to current availability **and** explicitly agreeing to display their name, blood group, city/state/area, and phone number.
 - Availability listings automatically expire after 24 hours. Search is limited to a city and state, with an optional blood-group filter. Donor registration and availability are stored in MySQL.

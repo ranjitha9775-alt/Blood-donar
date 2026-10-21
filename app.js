@@ -397,22 +397,10 @@
           updateRegistrationFields();
           message.textContent = "";
           document.getElementById("registerDialog").close();
-          showToast(result.message || "Registration successful. You are now signed in.");
-
-          const requestedReturn = new URLSearchParams(window.location.search).get("next");
-          let hasSafeReturn = false;
-          if (requestedReturn) {
-            try {
-              const returnUrl = new URL(requestedReturn, window.location.origin);
-              if (returnUrl.origin === window.location.origin && returnUrl.pathname.startsWith("/") && !returnUrl.pathname.startsWith("//")) {
-                hasSafeReturn = true;
-                window.location.assign(returnUrl.href);
-              }
-            } catch (error) {
-              console.error("Invalid post-registration return path:", error);
-            }
+          showToast("Registration successful. You can log in whenever you are ready.");
+          if (window.location.search) {
+            window.history.replaceState(null, "", `${window.location.pathname}${window.location.hash}`);
           }
-          if (!hasSafeReturn) window.location.assign("/login?registered=1");
         } catch (error) {
           console.error("Account registration failed:", error);
           message.textContent = error.message;
