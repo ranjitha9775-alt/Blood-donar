@@ -4,7 +4,7 @@ LifeDrop is a student project demo. Donor availability, account profiles, donati
 
 ## Open the website
 
-[**Open LifeDrop on this computer**](http://localhost:3002)
+[**Open LifeDrop on this computer**](http://localhost:3000)
 
 This link works only when the LifeDrop server is running on your computer. It is not a public website URL; others cannot open your computer's `localhost` link. A public URL requires completing the hosting deployment below.
 
@@ -15,7 +15,7 @@ This link works only when the LifeDrop server is running on your computer. It is
 3. Configure the database connection in a local `.env` file:
 
    ```env
-   PORT=3002
+   PORT=3000
    DB_HOST=localhost
    DB_PORT=3306
    DB_USER=your_mysql_user
@@ -25,9 +25,9 @@ This link works only when the LifeDrop server is running on your computer. It is
 
 4. Configure a stable, random `SESSION_SECRET` in `.env` (at least 32 characters). For example, generate one with `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` and copy it into `.env`.
 5. Run `npm install`, then `npm start`.
-6. Open `http://localhost:3002`. `localhost` is only your own computer; this is not the public deployed website URL.
+6. Open `http://localhost:3000`. `localhost` is only your own computer; this is not the public deployed website URL.
 
-On startup, the server creates the `camp_registrations`, `users`, and `blood_requests` tables, and creates or migrates the `donors` table, including a state field for expanding searches beyond Karnataka. The database user needs permission to create/alter tables and create indexes. The local health endpoint is `http://localhost:3002/api/health`.
+On startup, the server creates the `camp_registrations`, `users`, and `blood_requests` tables, and creates or migrates the `donors` table, including a state field for expanding searches beyond Karnataka. The database user needs permission to create/alter tables and create indexes. The local health endpoint is `http://localhost:3000/api/health`.
 
 ## Deploy online with Railway
 
@@ -93,7 +93,7 @@ The app creates its tables on startup. The MySQL user needs permission to create
   ```
 
   Patient accounts remain in `users`; only new patient registrations that provide request details create a corresponding row in `patients`. Existing account records are not automatically converted into requests because their hospital, unit, and urgency details were not collected.
-- Login is available at `/login`. Live availability search is visible only to logged-in accounts, and the API also enforces authentication.
+- Login is available at `/login`. After login, the live availability search automatically checks opted-in donors in the account's registered city and state. Donor accounts can explicitly opt in to display their contact details for 24 hours or turn their listing off from the login page. Users can change the city/state or filter by blood group. This is a city/state match, not GPS-based distance; live search is visible only to logged-in accounts, and the API also enforces authentication.
 - A donor appears in search only after opting in to current availability **and** explicitly agreeing to display their name, blood group, city/state/area, and phone number.
 - Availability listings automatically expire after 24 hours. Search is limited to a city and state, with an optional blood-group filter. Donor registration and availability are stored in MySQL.
 - Contact the donor to confirm availability. Donor listings are not blood-bank inventory, and the application does not determine medical compatibility or donor eligibility.

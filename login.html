@@ -42,6 +42,13 @@
     .profile-role { display: block; color: var(--muted); font-size: 12px; text-transform: capitalize; }
     .search-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; gap: 12px; margin-top: 21px; }
     .search-grid .btn { grid-column: 1 / -1; }
+    .donor-opt-in { margin-top: 20px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: #fffafa; }
+    .donor-opt-in h3 { margin: 0; font-size: 15px; }
+    .donor-opt-in > p { margin: 5px 0 12px; color: var(--muted); font-size: 12px; }
+    .consent-label { display: flex; align-items: flex-start; gap: 9px; color: var(--ink); font-size: 12px; }
+    .consent-label input { width: 17px; min-height: 17px; flex: 0 0 17px; margin: 2px 0 0; accent-color: var(--red); }
+    .availability-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; }
+    .availability-status { margin: 0; color: var(--muted); font-size: 12px; }
     .help { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
     .results { display: grid; gap: 0; margin-top: 22px; }
     .result-card { padding: 16px 0; border-top: 1px solid var(--line); }
@@ -82,11 +89,20 @@
         <div><span class="profile-name" id="profileName"></span><span class="profile-role" id="profileRole"></span></div>
         <button class="btn btn-outline" id="logoutButton" type="button">Log out</button>
       </div>
-      <h2 id="availabilityTitle">Search available donors</h2>
-      <p class="help">Search by city and state, and optionally blood group. These are individual donors who confirmed current availability, not blood-bank inventory. Phone numbers are displayed only with donor consent; listings expire after 24 hours.</p>
+      <h2 id="availabilityTitle">Available donors near your location</h2>
+      <p class="help">We automatically check for available donors in your registered city and state after login. You can change the location or filter by blood group. Results are individual donors who confirmed current availability, not blood-bank inventory. Phone numbers are displayed only with donor consent; listings expire after 24 hours.</p>
+      <form class="donor-opt-in" id="donorAvailabilityForm" hidden>
+        <h3>Manage your donor availability</h3>
+        <p>Opt in to appear in donor searches for 24 hours. You can turn this off at any time.</p>
+        <label class="consent-label"><input id="donorAvailabilityConsent" name="consent" type="checkbox"><span>I am currently available to be contacted, and I explicitly consent to showing my name, blood group, city, area, and phone number to people searching for donors during the next 24 hours.</span></label>
+        <div class="availability-actions">
+          <button class="btn btn-primary" type="submit">Update availability</button>
+          <p class="availability-status" id="donorAvailabilityMessage" aria-live="polite"></p>
+        </div>
+      </form>
       <form class="search-grid" id="availabilityForm">
         <div class="field"><label for="searchCity">City</label><input id="searchCity" name="city" type="search" required minlength="2" maxlength="80" placeholder="e.g. Bengaluru"></div>
-        <div class="field"><label for="searchState">State / union territory</label><input id="searchState" name="state" type="search" value="Karnataka" required maxlength="80" placeholder="e.g. Karnataka"></div>
+        <div class="field"><label for="searchState">State / union territory</label><input id="searchState" name="state" type="search" required maxlength="80" placeholder="e.g. Karnataka"></div>
         <div class="field">
           <label for="searchGroup">Blood group</label>
           <select id="searchGroup" name="blood_group">

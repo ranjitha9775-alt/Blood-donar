@@ -46,6 +46,7 @@
   function showLogin(message = "") {
     loginPanel.hidden = false;
     availabilityPanel.hidden = true;
+    document.getElementById("donorAvailabilityForm").hidden = true;
     loginMessage.textContent = message;
   }
 
@@ -54,8 +55,32 @@
     availabilityPanel.hidden = false;
     document.getElementById("profileName").textContent = user.full_name;
     document.getElementById("profileRole").textContent = `${user.role} account · ${user.email}`;
-    searchMessage.textContent = "";
-    searchResults.textContent = "Enter a city to search.";
+    const donorAvailabilityForm = document.getElementById("donorAvailabilityForm");
+    const form = document.getElementById("availabilityForm");
+    form.elements.city.value = user.city || "";
+    form.elements.state.value = user.state || "";
+    donorAvailabilityForm.hidden = user.role !== "donor";
+    if (user.role === "donor") loadDonorAvailability();
+    if (user.city && user.state) {
+      searchAvailableDonors();
+    } else {
+      searchMessage.textContent = "Add a city and state to your profile location to search for nearby donors.";
+      searchResults.textContent = "Enter a city and state to search.";
+    }
+  }
+
+  async function loadDonorAvailability() {
+    const message = document.getElementById("donorAvailabilityMessage");
+    try {
+      const data = await requestJson("/api/availability/status");
+      document.getElementById("donorAvailabilityConsent").checked = data.is_available;
+      message.textContent = data.is_available
+        ? `Your listing is live until ${new Date(data.available_until).toLocaleString()}.`
+        : "You are not currently listed as an available donor.";
+    } catch (error) {
+      console.error("Could not load donor availability status:", error);
+      message.textContent = error.message;
+    }
   }
 
   document.getElementById("loginForm").addEventListener("submit", async event => {
@@ -89,9 +114,8 @@
     }
   });
 
-  document.getElementById("availabilityForm").addEventListener("submit", async event => {
-    event.preventDefault();
-    const form = event.currentTarget;
+  async function searchAvailableDonors() {
+    const form = document.getElementById("availabilityForm");
     if (!form.reportValidity()) return;
 
     const params = new URLSearchParams({
@@ -99,12 +123,12 @@
       state: form.elements.state.value.trim()
     });
     if (form.elements.blood_group.value) params.set("blood_group", form.elements.blood_group.value);
-    searchResults.textContent = "Checking current availability…";
+    searchResults.textContent = "Checking current availability near your location…";
     searchMessage.textContent = "";
     try {
       const data = await requestJson(`/api/availability?${params}`);
       if (!data.donors.length) {
-        searchResults.innerHTML = '<div class="empty">No opted-in donors are currently available for this search.</div>';
+        searchResults.innerHTML = '<div class="empty">No opted-in donors are currently available in this city and state. Try another nearby city or check again later.</div>';
         return;
       }
       const checkedAt = new Date(data.checked_at);
@@ -124,6 +148,39 @@
       searchResults.textContent = "";
       searchMessage.textContent = error.message;
       if (error.message.toLowerCase().includes("log in")) showLogin(error.message);
+    }
+  }
+
+  document.getElementById("availabilityForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    await searchAvailableDonors();
+  });
+
+  document.getElementById("donorAvailabilityForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector('button[type="submit"]');
+    const message = document.getElementById("donorAvailabilityMessage");
+    button.disabled = true;
+    message.textContent = "Updating your availability…";
+    try {
+      const data = await requestJson("/api/availability/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          is_available: document.getElementById("donorAvailabilityConsent").checked,
+          public_contact_consent: document.getElementById("donorAvailabilityConsent").checked
+        })
+      });
+      message.textContent = data.is_available
+        ? `Your listing is live until ${new Date(data.available_until).toLocaleString()}.`
+        : "Your listing has been turned off.";
+      await searchAvailableDonors();
+    } catch (error) {
+      console.error("Donor availability could not be updated:", error);
+      message.textContent = error.message;
+    } finally {
+      button.disabled = false;
     }
   });
 

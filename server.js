@@ -161,7 +161,7 @@ async function requireSession(req, res, next) {
   if (!userId) return res.status(401).json({ message: 'Log in to check live donor availability.' });
   try {
     const [users] = await db.execute(
-      'SELECT user_id, full_name, email, role FROM users WHERE user_id = ? LIMIT 1',
+      'SELECT user_id, full_name, email, role, city, state FROM users WHERE user_id = ? LIMIT 1',
       [userId]
     );
     if (!users.length) {
@@ -871,7 +871,7 @@ app.post('/api/login', rateLimit(10, 15 * 60 * 1000), requireDatabase, async (re
 
   try {
     const [users] = await db.execute(
-      'SELECT user_id, full_name, email, password_hash, role FROM users WHERE email = ? LIMIT 1',
+      'SELECT user_id, full_name, email, password_hash, role, city, state FROM users WHERE email = ? LIMIT 1',
       [email]
     );
     const user = users[0];
@@ -881,7 +881,14 @@ app.post('/api/login', rateLimit(10, 15 * 60 * 1000), requireDatabase, async (re
     setSessionCookie(res, user.user_id);
     res.json({
       message: 'Login successful.',
-      user: { user_id: user.user_id, full_name: user.full_name, email: user.email, role: user.role }
+      user: {
+        user_id: user.user_id,
+        full_name: user.full_name,
+        email: user.email,
+        role: user.role,
+        city: user.city,
+        state: user.state
+      }
     });
   } catch (error) {
     console.error('Login failed:', error.code || error.message);
@@ -894,7 +901,7 @@ app.get('/api/me', requireDatabase, async (req, res) => {
   if (!userId) return res.json({ user: null });
   try {
     const [users] = await db.execute(
-      'SELECT user_id, full_name, email, role FROM users WHERE user_id = ? LIMIT 1',
+      'SELECT user_id, full_name, email, role, city, state FROM users WHERE user_id = ? LIMIT 1',
       [userId]
     );
     if (!users.length) {
@@ -911,6 +918,79 @@ app.get('/api/me', requireDatabase, async (req, res) => {
 app.post('/api/logout', (req, res) => {
   clearSessionCookie(res);
   res.json({ message: 'Logged out successfully.' });
+});
+
+app.get('/api/availability/status', requireDatabase, requireSession, async (req, res) => {
+  if (req.user.role !== 'donor') {
+    return res.status(403).json({ message: 'Only donor accounts can manage donor availability.' });
+  }
+  try {
+    const [donors] = await db.execute(
+      `SELECT available, public_contact_consent,
+              DATE_FORMAT(availability_expires_at, '%Y-%m-%dT%H:%i:%sZ') AS available_until
+       FROM donors
+       WHERE user_id = ?
+       LIMIT 1`,
+      [req.user.user_id]
+    );
+    if (!donors.length) {
+      return res.status(404).json({ message: 'No donor profile is linked to this account.' });
+    }
+    const active = donors[0].available === 1 &&
+      donors[0].public_contact_consent === 1 &&
+      donors[0].available_until &&
+      new Date(donors[0].available_until).getTime() > Date.now();
+    res.json({
+      is_available: Boolean(active),
+      available_until: active ? donors[0].available_until : null
+    });
+  } catch (error) {
+    console.error('Donor availability status lookup failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not check your donor availability status.' });
+  }
+});
+
+app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(10, 15 * 60 * 1000), async (req, res) => {
+  if (req.user.role !== 'donor') {
+    return res.status(403).json({ message: 'Only donor accounts can manage donor availability.' });
+  }
+  const { is_available: isAvailable, public_contact_consent: publicContactConsent } = req.body || {};
+  if (typeof isAvailable !== 'boolean' || typeof publicContactConsent !== 'boolean') {
+    return res.status(400).json({ message: 'Confirm your availability and contact-display consent.' });
+  }
+  if (isAvailable && !publicContactConsent) {
+    return res.status(400).json({ message: 'To appear in donor search, confirm availability and consent to display your contact details.' });
+  }
+
+  try {
+    const availableUntil = isAvailable
+      ? new Date(Math.ceil(Date.now() / 1000) * 1000 + AVAILABILITY_HOURS * 60 * 60 * 1000)
+      : null;
+    const [result] = await db.execute(
+      `UPDATE donors
+       SET available = ?, public_contact_consent = ?, availability_expires_at = ?
+       WHERE user_id = ?`,
+      isAvailable
+        ? [1, 1, availableUntil, req.user.user_id]
+        : [0, 0, null, req.user.user_id]
+    );
+    if (!result.affectedRows) {
+      const [donors] = await db.execute(
+        'SELECT id FROM donors WHERE user_id = ? LIMIT 1',
+        [req.user.user_id]
+      );
+      if (!donors.length) {
+        return res.status(404).json({ message: 'No donor profile is linked to this account.' });
+      }
+    }
+    res.json({
+      is_available: isAvailable,
+      available_until: availableUntil?.toISOString() || null
+    });
+  } catch (error) {
+    console.error('Donor availability status update failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not update your donor availability.' });
+  }
 });
 
 app.get('/api/availability/count', requireDatabase, requireSession, async (req, res) => {
