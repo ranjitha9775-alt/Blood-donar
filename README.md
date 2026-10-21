@@ -9,7 +9,7 @@ LifeDrop is a student project demo. Donor availability, account profiles, donati
 3. Configure the database connection in a local `.env` file:
 
    ```env
-   PORT=3000
+   PORT=3002
    DB_HOST=localhost
    DB_PORT=3306
    DB_USER=your_mysql_user
@@ -19,9 +19,9 @@ LifeDrop is a student project demo. Donor availability, account profiles, donati
 
 4. Configure a stable, random `SESSION_SECRET` in `.env` (at least 32 characters). For example, generate one with `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` and copy it into `.env`.
 5. Run `npm install`, then `npm start`.
-6. Open `http://localhost:3000`.
+6. Open `http://localhost:3002`. `localhost` is only your own computer; this is not the public deployed website URL.
 
-On startup, the server creates the `camp_registrations`, `users`, and `blood_requests` tables, and creates or migrates the `donors` table, including a state field for expanding searches beyond Karnataka. The database user needs permission to create/alter tables and create indexes. The health endpoint is `http://localhost:3000/api/health`.
+On startup, the server creates the `camp_registrations`, `users`, and `blood_requests` tables, and creates or migrates the `donors` table, including a state field for expanding searches beyond Karnataka. The database user needs permission to create/alter tables and create indexes. The local health endpoint is `http://localhost:3002/api/health`.
 
 ## Deploy online with Railway
 
