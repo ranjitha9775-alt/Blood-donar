@@ -82,7 +82,17 @@ The app creates its tables on startup. The MySQL user needs permission to create
 
 ## Accounts and live donor availability
 
-- Donors and patients create accounts with an email address and password. Passwords are hashed before storage. After registration, the home page stays open and users may select Login when they are ready to sign in. Registration clears any existing session, so the new account is not logged in automatically.
+- Donors and patients create accounts with an email address and password. Passwords are hashed before storage. Donor account/profile creation is transactional across `users` and `donors`. Patient registration also collects hospital, units, and urgency, then transactionally saves the account in `users` and its initial `Pending` blood request in `patients`. After registration, the home page stays open and users may select Login when they are ready to sign in. Registration clears any existing session, so the new account is not logged in automatically.
+- To verify patient blood requests in MySQL Workbench, select the `lifedrop` schema and run:
+
+  ```sql
+  SELECT patient_id, patient_name, age, gender, blood_group, hospital_name,
+         city, area, contact_number, units_required, urgency, request_status, request_date
+  FROM patients
+  ORDER BY patient_id DESC;
+  ```
+
+  Patient accounts remain in `users`; only new patient registrations that provide request details create a corresponding row in `patients`. Existing account records are not automatically converted into requests because their hospital, unit, and urgency details were not collected.
 - Login is available at `/login`. Live availability search is visible only to logged-in accounts, and the API also enforces authentication.
 - A donor appears in search only after opting in to current availability **and** explicitly agreeing to display their name, blood group, city/state/area, and phone number.
 - Availability listings automatically expire after 24 hours. Search is limited to a city and state, with an optional blood-group filter. Donor registration and availability are stored in MySQL.

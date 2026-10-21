@@ -210,6 +210,38 @@ async function initializeDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
   );
   await db.query(
+    `CREATE TABLE IF NOT EXISTS patients (
+      patient_id INT NOT NULL AUTO_INCREMENT,
+      patient_name VARCHAR(100) NOT NULL,
+      age INT NULL,
+      gender VARCHAR(20) NULL,
+      blood_group VARCHAR(5) NOT NULL,
+      hospital_name VARCHAR(150) NULL,
+      city VARCHAR(100) NULL,
+      area VARCHAR(100) NOT NULL DEFAULT '',
+      contact_number VARCHAR(20) NOT NULL,
+      units_required INT NULL DEFAULT 1,
+      urgency VARCHAR(20) NULL DEFAULT 'Normal',
+      request_status VARCHAR(32) NOT NULL DEFAULT 'Pending',
+      request_date TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (patient_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  const [patientColumns] = await db.query('SHOW COLUMNS FROM patients');
+  const patientColumnNames = new Set(patientColumns.map(column => column.Field));
+  const patientMigrations = [
+    ['area', "ALTER TABLE patients ADD COLUMN area VARCHAR(100) NOT NULL DEFAULT '' AFTER city"],
+    ['request_status', "ALTER TABLE patients ADD COLUMN request_status VARCHAR(32) NOT NULL DEFAULT 'Pending' AFTER urgency"]
+  ];
+  for (const [columnName, statement] of patientMigrations) {
+    if (!patientColumnNames.has(columnName)) await db.query(statement);
+  }
+  const patientPhoneColumn = patientColumns.find(column => column.Field === 'contact_number');
+  const patientPhoneLength = patientPhoneColumn?.Type.match(/^varchar\((\d+)\)$/i);
+  if (patientPhoneLength && Number(patientPhoneLength[1]) < 20) {
+    await db.query('ALTER TABLE patients MODIFY COLUMN contact_number VARCHAR(20) NOT NULL');
+  }
+  await db.query(
     `CREATE TABLE IF NOT EXISTS blood_requests (
       request_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
       user_id BIGINT UNSIGNED NOT NULL,
@@ -708,6 +740,9 @@ app.post('/api/register', rateLimit(5, 15 * 60 * 1000), requireDatabase, async (
     last_donation_date: lastDonationDate,
     is_available: isAvailable,
     public_contact_consent: publicContactConsent,
+    hospital_name: submittedHospitalName,
+    units_required: submittedUnitsRequired,
+    urgency: submittedUrgency,
     consent,
     state
   } = req.body || {};
@@ -715,6 +750,8 @@ app.post('/api/register', rateLimit(5, 15 * 60 * 1000), requireDatabase, async (
   const bloodGroup = normalizeBloodGroup(submittedBloodGroup);
   const normalizedPhone = typeof phone === 'string' ? phone.trim() : '';
   const phoneDigits = normalizedPhone.replace(/\D/g, '');
+  const hospitalName = typeof submittedHospitalName === 'string' ? submittedHospitalName.trim() : '';
+  const urgency = typeof submittedUrgency === 'string' ? submittedUrgency : '';
 
   if (
     !isNonEmptyString(fullName, 100) ||
@@ -734,6 +771,10 @@ app.post('/api/register', rateLimit(5, 15 * 60 * 1000), requireDatabase, async (
     !isNonEmptyString(city, 80) ||
     !isNonEmptyString(state, 80) ||
     !isNonEmptyString(place, 100) ||
+    (role === 'patient' &&
+      (!isNonEmptyString(hospitalName, 150) ||
+       !Number.isInteger(submittedUnitsRequired) || submittedUnitsRequired < 1 || submittedUnitsRequired > 20 ||
+       !REQUEST_URGENCIES.has(urgency))) ||
     (lastDonationDate !== null && lastDonationDate !== '' &&
       (!isValidDateOnly(lastDonationDate) || lastDonationDate > new Date().toISOString().slice(0, 10))) ||
     typeof isAvailable !== 'boolean' ||
@@ -780,10 +821,33 @@ app.post('/api/register', rateLimit(5, 15 * 60 * 1000), requireDatabase, async (
         ]
       );
     }
+    if (role === 'patient') {
+      await connection.execute(
+        `INSERT INTO patients
+         (patient_name, age, gender, blood_group, hospital_name, city, area,
+          contact_number, units_required, urgency, request_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          fullName.trim(),
+          age,
+          gender,
+          bloodGroup,
+          hospitalName,
+          city.trim(),
+          place.trim(),
+          normalizedPhone,
+          submittedUnitsRequired,
+          urgency,
+          'Pending'
+        ]
+      );
+    }
     await connection.commit();
     clearSessionCookie(res);
     res.status(201).json({
-      message: 'Account created. Please log in.'
+      message: role === 'patient'
+        ? 'Account and blood request created. Please log in.'
+        : 'Account created. Please log in.'
     });
   } catch (error) {
     if (connection) await connection.rollback().catch(() => {});

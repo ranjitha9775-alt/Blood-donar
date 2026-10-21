@@ -372,7 +372,14 @@
           <div class="field"><label for="registrationPhone">Phone number</label><input id="registrationPhone" name="phone" type="tel" autocomplete="tel" inputmode="tel" pattern="\+?[0-9][0-9 \x2d]{6,18}[0-9]" required></div>
           <div class="field"><label for="registrationCity">City</label><input id="registrationCity" name="city" required maxlength="80"></div>
           <div class="field"><label for="registrationState">State / union territory</label><input id="registrationState" name="state" value="Karnataka" autocomplete="address-level1" required maxlength="80"></div>
-          <div class="field"><label for="registrationPlace">Place / area</label><input id="registrationPlace" name="place" required maxlength="100"></div>
+          <div class="field"><label for="registrationPlace">Area / locality</label><input id="registrationPlace" name="place" required maxlength="100"></div>
+          <div id="patientRequestFields" class="span-2" hidden>
+            <div class="form-grid">
+              <div class="field span-2"><label for="registrationHospital">Hospital name</label><input id="registrationHospital" name="hospital_name" maxlength="150" disabled></div>
+              <div class="field"><label for="registrationUnits">Units required</label><input id="registrationUnits" name="units_required" type="number" min="1" max="20" step="1" value="1" disabled></div>
+              <div class="field"><label for="registrationUrgency">Urgency</label><select id="registrationUrgency" name="urgency" disabled><option value="">Select urgency</option><option>Urgent</option><option>Within 24 hours</option><option>Planned</option></select></div>
+            </div>
+          </div>
           <div class="field" id="lastDonationField" hidden><label for="lastDonation">Last donation date <span class="form-hint">(optional)</span></label><input id="lastDonation" name="lastDonation" type="date"></div>
           <label class="check-field span-2" id="donorInterestField" hidden><input name="availability" type="checkbox"><span>I confirm that I am currently available to be contacted about donation opportunities. This status expires after 24 hours and does not confirm medical eligibility.</span></label>
           <label class="check-field span-2" id="publicContactField" hidden><input name="publicContactConsent" type="checkbox"><span>I explicitly agree that my name, blood group, city/state/area, and phone number may be displayed to people searching availability for up to 24 hours. I understand anyone using this demo may see these details.</span></label>

@@ -264,15 +264,27 @@
       const lastDonationField = document.getElementById("lastDonationField");
       const donorInterestField = document.getElementById("donorInterestField");
       const publicContactField = document.getElementById("publicContactField");
+      const patientRequestFields = document.getElementById("patientRequestFields");
       function updateRegistrationFields() {
         const isDonor = registrationRole.value === "donor";
+        const isPatient = registrationRole.value === "patient";
         lastDonationField.hidden = !isDonor;
         donorInterestField.hidden = !isDonor;
         publicContactField.hidden = !isDonor;
+        patientRequestFields.hidden = !isPatient;
+        patientRequestFields.querySelectorAll("input, select").forEach(field => {
+          field.disabled = !isPatient;
+          field.required = isPatient;
+        });
         if (!isDonor) {
           document.getElementById("lastDonation").value = "";
           donorInterestField.querySelector("input").checked = false;
           publicContactField.querySelector("input").checked = false;
+        }
+        if (!isPatient) {
+          document.getElementById("registrationHospital").value = "";
+          document.getElementById("registrationUnits").value = "1";
+          document.getElementById("registrationUrgency").value = "";
         }
       }
       registrationRole.addEventListener("change", updateRegistrationFields);
@@ -390,6 +402,9 @@
               last_donation_date: role === "donor" ? data.get("lastDonation") || null : null,
               is_available: role === "donor" && data.has("availability"),
               public_contact_consent: role === "donor" && data.has("publicContactConsent"),
+              hospital_name: role === "patient" ? String(data.get("hospital_name")).trim() : null,
+              units_required: role === "patient" ? Number(data.get("units_required")) : null,
+              urgency: role === "patient" ? data.get("urgency") : null,
               consent: data.has("consent")
             })
           });
@@ -397,7 +412,7 @@
           updateRegistrationFields();
           message.textContent = "";
           document.getElementById("registerDialog").close();
-          showToast("Registration successful. You can log in whenever you are ready.");
+          showToast(`${result.message} You can log in whenever you are ready.`);
           if (window.location.search) {
             window.history.replaceState(null, "", `${window.location.pathname}${window.location.hash}`);
           }
