@@ -1,0 +1,22 @@
+{
+  "name": "blood-donar",
+  "version": "1.0.0",
+  "description": "LifeDrop Blood Donor Emergency and Blood Availability Portal",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "check": "node --check server.js && node --check app.js && node --check login.js"
+  },
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^18.0.8",
+    "express": "^5.3.0",
+    "mysql2": "^3.24.6"
+  }
+}

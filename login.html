@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#c6283d">
+  <meta name="description" content="Log in to check currently available, opted-in LifeDrop donors.">
+  <title>Login — LifeDrop</title>
+  <style>
+    :root { color-scheme: light; --red: #c6283d; --red-dark: #a51f32; --ink: #20232b; --muted: #737985; --line: #eceef1; --canvas: #f8f9fb; --green: #287a59; }
+    * { box-sizing: border-box; }
+    body { min-height: 100vh; margin: 0; background: var(--canvas); color: var(--ink); font: 15px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    a { color: inherit; text-decoration: none; }
+    button, input, select { font: inherit; }
+    .top-note { padding: 8px 16px; background: #fff8e8; color: #6c5221; text-align: center; font-size: 12px; }
+    header { background: white; border-bottom: 1px solid var(--line); }
+    .nav { width: min(1040px, calc(100% - 40px)); min-height: 70px; margin: auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .brand { font-size: 22px; font-weight: 850; letter-spacing: -.8px; }
+    .brand span { color: var(--red); }
+    .back-link { color: var(--muted); font-size: 13px; font-weight: 700; }
+    main { width: min(1040px, calc(100% - 40px)); margin: 42px auto; }
+    .intro { margin-bottom: 22px; }
+    .intro p { margin: 5px 0 0; color: var(--muted); }
+    h1 { margin: 0; font-size: clamp(28px, 4vw, 38px); letter-spacing: -1px; }
+    h2 { margin: 0; font-size: 23px; letter-spacing: -.5px; }
+    .panel { padding: clamp(20px, 4vw, 34px); background: white; border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 12px 35px rgba(30,38,52,.06); }
+    .login-panel { max-width: 500px; margin: 0 auto; }
+    .form { display: grid; gap: 15px; margin-top: 20px; }
+    .field { display: grid; gap: 6px; }
+    label { color: #555b66; font-size: 12px; font-weight: 750; }
+    input, select { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #e1e4e9; border-radius: 10px; background: white; color: var(--ink); }
+    input:focus, select:focus { outline: 3px solid rgba(198,40,61,.16); border-color: #d85d6d; }
+    .btn { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; padding: 0 17px; border: 0; border-radius: 10px; font-size: 13px; font-weight: 750; cursor: pointer; }
+    .btn-primary { background: var(--red); color: white; }
+    .btn-primary:hover { background: var(--red-dark); }
+    .btn-outline { background: white; color: var(--ink); border: 1px solid #e1e4e9; }
+    .login-footer { margin: 18px 0 0; color: var(--muted); text-align: center; font-size: 12px; }
+    .login-footer a { color: var(--red); font-weight: 750; }
+    .message { min-height: 18px; margin: 0; color: #a51f32; font-size: 12px; }
+    .profile-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+    .profile-name { font-size: 15px; font-weight: 750; }
+    .profile-role { display: block; color: var(--muted); font-size: 12px; text-transform: capitalize; }
+    .search-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; gap: 12px; margin-top: 21px; }
+    .search-grid .btn { grid-column: 1 / -1; }
+    .help { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+    .results { display: grid; gap: 0; margin-top: 22px; }
+    .result-card { padding: 16px 0; border-top: 1px solid var(--line); }
+    .result-card h3 { margin: 0 0 5px; font-size: 15px; }
+    .result-card p { margin: 3px 0; color: var(--muted); font-size: 12px; }
+    .result-card a { color: var(--red); font-weight: 750; }
+    .empty { padding: 20px; border: 1px dashed #e0e3e8; border-radius: 12px; color: var(--muted); text-align: center; font-size: 13px; }
+    .notice { margin-top: 20px; padding: 13px 15px; border-radius: 11px; background: #fff8e8; color: #6c5221; font-size: 12px; }
+    [hidden] { display: none !important; }
+    @media (max-width: 650px) { main { margin: 28px auto; } .search-grid { grid-template-columns: 1fr; } .search-grid .btn { width: 100%; } }
+  </style>
+</head>
+<body>
+  <div class="top-note">Live donor contact details are shown only to logged-in users and only with explicit donor consent.</div>
+  <header>
+    <div class="nav">
+      <a class="brand" href="/">Life<span>Drop</span></a>
+      <a class="back-link" href="/">← Back to home</a>
+    </div>
+  </header>
+  <main>
+    <div class="intro">
+      <h1>Live donor availability</h1>
+      <p>Log in to search for donors who have confirmed they are currently available.</p>
+    </div>
+    <section class="panel login-panel" id="loginPanel" aria-labelledby="loginTitle">
+      <h2 id="loginTitle">Log in to LifeDrop</h2>
+      <form class="form" id="loginForm">
+        <div class="field"><label for="loginEmail">Email address</label><input id="loginEmail" name="email" type="email" autocomplete="username" required maxlength="150"></div>
+        <div class="field"><label for="loginPassword">Password</label><input id="loginPassword" name="password" type="password" autocomplete="current-password" required maxlength="128"></div>
+        <p class="message" id="loginMessage" aria-live="polite"></p>
+        <button class="btn btn-primary" type="submit">Log in and continue</button>
+      </form>
+      <p class="login-footer">New to LifeDrop? <a href="/?register=1">Create a donor or patient account</a></p>
+    </section>
+    <section class="panel" id="availabilityPanel" aria-labelledby="availabilityTitle" hidden>
+      <div class="profile-bar">
+        <div><span class="profile-name" id="profileName"></span><span class="profile-role" id="profileRole"></span></div>
+        <button class="btn btn-outline" id="logoutButton" type="button">Log out</button>
+      </div>
+      <h2 id="availabilityTitle">Search available donors</h2>
+      <p class="help">Search by city and state, and optionally blood group. These are individual donors who confirmed current availability, not blood-bank inventory. Phone numbers are displayed only with donor consent; listings expire after 24 hours.</p>
+      <form class="search-grid" id="availabilityForm">
+        <div class="field"><label for="searchCity">City</label><input id="searchCity" name="city" type="search" required minlength="2" maxlength="80" placeholder="e.g. Bengaluru"></div>
+        <div class="field"><label for="searchState">State / union territory</label><input id="searchState" name="state" type="search" value="Karnataka" required maxlength="80" placeholder="e.g. Karnataka"></div>
+        <div class="field">
+          <label for="searchGroup">Blood group</label>
+          <select id="searchGroup" name="blood_group">
+            <option value="">Any group</option><option>A+</option><option>A−</option><option>B+</option><option>B−</option><option>AB+</option><option>AB−</option><option>O+</option><option>O−</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" type="submit">Check availability</button>
+      </form>
+      <p class="message" id="searchMessage" aria-live="polite"></p>
+      <div class="results" id="searchResults" aria-live="polite">Enter a city to search.</div>
+      <div class="notice">This is not verified blood-bank stock or medical advice. Confirm directly with donors. For emergencies, contact the patient's hospital and emergency services immediately.</div>
+    </section>
+  </main>
+  <script src="/login.js" defer></script>
+</body>
+</html>

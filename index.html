@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#c6283d">
+  <meta name="description" content="LifeDrop connects communities to blood donation information, emergency request guidance, and donation camps.">
+  <title>LifeDrop — Every drop counts</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --red: #c6283d;
+      --red-dark: #a51f32;
+      --red-soft: #fff0f1;
+      --ink: #20232b;
+      --muted: #737985;
+      --line: #eceef1;
+      --paper: #ffffff;
+      --canvas: #f8f9fb;
+      --green: #287a59;
+      --shadow: 0 12px 35px rgba(30, 38, 52, .07);
+      --radius: 18px;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html { scroll-behavior: smooth; scroll-padding-top: 92px; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    button, input, select, textarea { font: inherit; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    a { color: inherit; text-decoration: none; }
+    button { cursor: pointer; }
+    .shell { width: min(1160px, calc(100% - 48px)); margin: 0 auto; }
+    header { position: sticky; top: 0; z-index: 20; background: rgba(255,255,255,.96); border-bottom: 1px solid var(--line); backdrop-filter: blur(12px); }
+    .nav { height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 25px; }
+    .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 850; font-size: 22px; letter-spacing: -.8px; }
+    .brand-mark { display: grid; place-items: center; width: 38px; height: 38px; color: white; background: var(--red); border-radius: 13px 13px 13px 5px; }
+    .brand-mark svg { width: 23px; height: 23px; }
+    .brand span span { color: var(--red); }
+    .nav-links { display: flex; align-items: center; gap: 26px; color: #575d67; font-size: 13px; font-weight: 650; }
+    .nav-links a:hover { color: var(--red); }
+    .nav-actions { display: flex; align-items: center; gap: 10px; }
+    .menu-toggle { display: none; border: 0; background: transparent; padding: 8px; font-size: 22px; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 17px; border: 1px solid transparent; border-radius: 11px; font-size: 13px; font-weight: 750; transition: .18s ease; }
+    .btn:hover { transform: translateY(-1px); }
+    .btn-primary { background: var(--red); color: white; box-shadow: 0 5px 14px rgba(198,40,61,.18); }
+    .btn-primary:hover { background: var(--red-dark); }
+    .btn-outline { color: var(--ink); background: white; border-color: #e5e7eb; }
+    .btn-outline:hover { border-color: #c9cdd4; }
+    .btn-light { color: var(--red); background: white; }
+    .btn-small { min-height: 37px; padding: 0 13px; font-size: 12px; }
+    .hero { position: relative; overflow: hidden; padding: 77px 0 68px; background: radial-gradient(ellipse at 88% 12%, #ffebed 0, transparent 31%), linear-gradient(115deg, #fff 43%, #fff9f9); }
+    .hero-grid { display: grid; grid-template-columns: 1.08fr .92fr; align-items: center; gap: 50px; }
+    .eyebrow { display: inline-flex; align-items: center; gap: 8px; color: var(--red); background: var(--red-soft); padding: 7px 11px; border-radius: 30px; font-weight: 750; font-size: 11px; letter-spacing: .5px; text-transform: uppercase; }
+    .eyebrow i { width: 7px; height: 7px; display: inline-block; border-radius: 50%; background: var(--red); }
+    h1 { max-width: 610px; margin: 19px 0 16px; font-size: clamp(42px, 5vw, 64px); line-height: 1.06; letter-spacing: -3.5px; }
+    h1 em { color: var(--red); font-style: normal; }
+    .hero-copy { max-width: 540px; margin: 0 0 27px; color: var(--muted); font-size: 16px; line-height: 1.75; }
+    .hero-actions { display: flex; flex-wrap: wrap; gap: 11px; }
+    .trust-line { display: flex; align-items: center; gap: 9px; margin-top: 22px; color: var(--muted); font-size: 12px; }
+    .trust-line svg { width: 17px; color: var(--green); }
+    .hero-art { min-height: 370px; position: relative; display: grid; place-items: center; }
+    .hero-blob { position: absolute; width: 330px; height: 330px; border-radius: 44% 56% 58% 42% / 47% 42% 58% 53%; background: #ffe6e8; transform: rotate(-12deg); }
+    .hero-illustration { position: relative; z-index: 1; width: min(390px, 100%); aspect-ratio: 1.18; overflow: hidden; border: 7px solid white; border-radius: 25px; background: #fff0f1; box-shadow: 0 20px 40px rgba(115,44,56,.16); }
+    .hero-illustration img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: center; }
+    .live-tag { color: #786128; background: #fff7df; border-radius: 30px; font-size: 10px; font-weight: 750; padding: 5px 9px; }
+    .float-pill { position: absolute; display: flex; align-items: center; gap: 9px; padding: 11px 14px; background: white; border: 1px solid #f1edef; border-radius: 13px; box-shadow: 0 12px 30px rgba(50,30,35,.1); font-size: 11px; font-weight: 750; }
+    .float-pill svg { width: 18px; color: var(--red); }
+    .float-one { top: 45px; right: 6px; }
+    .float-two { bottom: 34px; left: 4px; }
+    section { padding: 76px 0; }
+    .section-head { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 28px; }
+    .section-kicker { margin: 0 0 8px; color: var(--red); font-size: 11px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+    h2 { margin: 0; font-size: clamp(27px, 3vw, 36px); line-height: 1.2; letter-spacing: -1.1px; }
+    .section-desc { max-width: 560px; margin: 9px 0 0; color: var(--muted); font-size: 14px; }
+    .stats { padding: 24px 0 34px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); }
+    .stat { padding: 5px 24px; border-right: 1px solid var(--line); text-align: center; }
+    .stat:first-child { padding-left: 0; }
+    .stat:last-child { border-right: 0; padding-right: 0; }
+    .stat strong { display: block; color: var(--red); font-size: 29px; letter-spacing: -1px; }
+    .stat span { color: var(--muted); font-size: 12px; }
+    .quick-section { padding-top: 62px; }
+    .quick-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; }
+    .quick-card { min-height: 184px; display: flex; flex-direction: column; align-items: flex-start; padding: 21px; border: 1px solid var(--line); border-radius: var(--radius); background: white; transition: .2s; }
+    .quick-card:hover { border-color: #f1b7be; box-shadow: var(--shadow); transform: translateY(-3px); }
+    .icon-box { width: 43px; height: 43px; display: grid; place-items: center; border-radius: 13px; background: var(--red-soft); color: var(--red); }
+    .icon-box svg { width: 21px; height: 21px; }
+    .quick-card h3 { margin: 14px 0 5px; font-size: 15px; }
+    .quick-card p { margin: 0; color: var(--muted); font-size: 12px; }
+    .quick-card .arrow { margin-top: auto; padding-top: 12px; color: var(--red); font-size: 12px; font-weight: 750; }
+    .soft-section { background: var(--canvas); }
+    .feature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 25px; }
+    .panel { background: white; border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; }
+    .panel-title { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin-bottom: 18px; }
+    .panel-title h3 { margin: 0; font-size: 17px; }
+    .text-link { color: var(--red); font-size: 12px; font-weight: 750; }
+    .request-row { display: flex; align-items: center; gap: 13px; padding: 14px 0; border-top: 1px solid #f0f1f3; }
+    .blood-badge { display: grid; flex: 0 0 46px; place-items: center; width: 46px; height: 46px; color: var(--red); background: var(--red-soft); border-radius: 14px; font-weight: 850; }
+    .request-info { flex: 1; min-width: 0; }
+    .request-info strong { display: block; font-size: 13px; }
+    .request-info small { color: var(--muted); font-size: 11px; }
+    .request-status-control { display: inline-flex; align-items: center; gap: 7px; margin-top: 7px; color: var(--muted); font-size: 11px; }
+    .request-status-control select { min-height: 32px; padding: 5px 8px; border: 1px solid #e1e4e9; border-radius: 8px; background: white; color: var(--ink); font: inherit; }
+    .status { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border-radius: 20px; background: #fff6df; color: #87621c; font-size: 9px; font-weight: 800; white-space: nowrap; }
+    .status::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+    .camp-row { padding: 14px 0; border-top: 1px solid #f0f1f3; }
+    .camp-row:first-of-type { border-top: 0; padding-top: 0; }
+    .camp-date { float: left; width: 48px; height: 50px; display: grid; place-content: center; margin-right: 12px; color: var(--red); background: var(--red-soft); border-radius: 12px; text-align: center; line-height: 1.1; font-weight: 850; }
+    .camp-date small { font-size: 9px; text-transform: uppercase; }
+    .camp-row strong { font-size: 13px; }
+    .camp-row p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+    .notice { display: flex; gap: 13px; padding: 15px 17px; background: #fff8e8; border: 1px solid #f3e6c6; border-radius: 13px; color: #745b2e; font-size: 12px; }
+    .notice strong { color: #5f471b; }
+    .notice svg { flex: 0 0 19px; width: 19px; }
+    .search-area { display: grid; grid-template-columns: 1fr 1fr auto; align-items: end; gap: 12px; }
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field label { font-size: 11px; color: #555b66; font-weight: 750; }
+    .field input, .field select, .field textarea { width: 100%; min-height: 43px; padding: 10px 12px; color: var(--ink); background: white; border: 1px solid #e1e4e9; border-radius: 10px; outline: none; }
+    .field textarea { min-height: 88px; resize: vertical; }
+    .field input:focus, .field select:focus, .field textarea:focus { border-color: #d85d6d; box-shadow: 0 0 0 3px rgba(198,40,61,.09); }
+    .search-results { margin-top: 20px; }
+    .stock-search { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: end; gap: 12px; }
+    .stock-search .btn { grid-column: 1 / -1; }
+    .stock-results { margin-top: 20px; }
+    .stock-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(115px, 1fr)); gap: 9px; margin-top: 15px; }
+    .stock-group { padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: #fffafb; text-align: center; }
+    .stock-group strong { display: block; color: var(--red); font-size: 16px; }
+    .stock-group span { color: var(--muted); font-size: 11px; }
+    .availability-card { padding: 16px 0; border-top: 1px solid var(--line); }
+    .availability-card h3 { margin: 0 0 5px; font-size: 14px; }
+    .availability-card p { margin: 3px 0; color: var(--muted); font-size: 12px; }
+    .availability-card a { color: var(--red); font-weight: 750; }
+    .empty-state { padding: 25px; border: 1px dashed #e0e3e8; border-radius: 14px; color: var(--muted); text-align: center; font-size: 12px; }
+    .bank-card { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 16px 0; border-top: 1px solid var(--line); }
+    .bank-card h3 { margin: 0 0 4px; font-size: 14px; }
+    .bank-card p { margin: 0; color: var(--muted); font-size: 11px; }
+    .demo-label { display: inline-block; margin-top: 7px; padding: 3px 7px; color: #725d2c; background: #fff7e4; border-radius: 6px; font-size: 9px; font-weight: 750; }
+    .camp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
+    .camp-card { padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: white; }
+    .camp-card .camp-date { float: none; margin: 0 0 15px; }
+    .camp-card h3 { margin: 0 0 6px; font-size: 15px; }
+    .camp-card p { margin: 5px 0; color: var(--muted); font-size: 11px; }
+    .camp-card .btn { margin-top: 13px; }
+    .awareness { display: grid; grid-template-columns: .95fr 1.05fr; align-items: center; gap: 55px; }
+    .awareness-visual { min-height: 290px; display: grid; place-items: center; background: #fff0f1; border-radius: 24px; }
+    .big-drop { width: 120px; color: var(--red); filter: drop-shadow(0 15px 14px rgba(198,40,61,.16)); }
+    .awareness-copy p { color: var(--muted); font-size: 14px; line-height: 1.8; }
+    .awareness-points { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }
+    .point { display: flex; align-items: flex-start; gap: 9px; font-size: 12px; font-weight: 700; }
+    .check { display: grid; flex: 0 0 20px; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: #e9f6ef; color: var(--green); font-size: 12px; }
+    .cta { padding: 36px; display: flex; justify-content: space-between; align-items: center; gap: 20px; border-radius: 22px; color: white; background: linear-gradient(115deg, #bd2439, #df5363); }
+    .cta h2 { font-size: 27px; }
+    .cta p { margin: 7px 0 0; color: rgba(255,255,255,.8); font-size: 13px; }
+    footer { margin-top: 75px; padding: 35px 0 22px; background: #20232b; color: white; }
+    .footer-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 30px; padding-bottom: 25px; border-bottom: 1px solid #3a3d45; }
+    .footer-top p { max-width: 370px; color: #b5b8c0; font-size: 12px; }
+    .footer-links { display: flex; flex-wrap: wrap; gap: 20px; color: #d1d3d9; font-size: 11px; }
+    .footer-bottom { display: flex; justify-content: space-between; gap: 15px; padding-top: 17px; color: #9296a0; font-size: 10px; }
+    dialog { width: min(550px, calc(100% - 28px)); max-height: min(90vh, 850px); padding: 0; border: 0; border-radius: 18px; box-shadow: 0 25px 80px rgba(18,23,32,.26); }
+    dialog::backdrop { background: rgba(24,28,38,.48); backdrop-filter: blur(3px); }
+    .dialog-head { display: flex; justify-content: space-between; align-items: flex-start; padding: 22px 24px 16px; border-bottom: 1px solid var(--line); }
+    .dialog-head h2 { font-size: 21px; }
+    .dialog-head p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+    .close-btn { width: 32px; height: 32px; border: 0; border-radius: 9px; background: #f3f4f6; font-size: 18px; }
+    .dialog-body { max-height: calc(90vh - 82px); overflow: auto; padding: 19px 24px 24px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
+    .span-2 { grid-column: span 2; }
+    .check-field { display: flex; align-items: flex-start; gap: 9px; color: #626874; font-size: 11px; }
+    .check-field input { margin-top: 3px; accent-color: var(--red); }
+    .form-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 18px; }
+    .form-message { min-height: 18px; margin-top: 10px; color: var(--green); font-size: 12px; }
+    .form-hint { color: var(--muted); font-size: 10px; }
+    .toast { position: fixed; right: 22px; bottom: 22px; z-index: 40; max-width: min(400px, calc(100% - 44px)); padding: 14px 17px; color: white; background: #252832; border-radius: 12px; box-shadow: var(--shadow); font-size: 12px; opacity: 0; transform: translateY(12px); pointer-events: none; transition: .22s; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    :focus-visible { outline: 3px solid rgba(198,40,61,.45); outline-offset: 3px; }
+    @media (max-width: 900px) {
+      .nav-links { gap: 14px; }
+      .hero-grid { gap: 15px; }
+      .quick-grid { grid-template-columns: repeat(2, 1fr); }
+      .search-area { grid-template-columns: repeat(2, 1fr); }
+      .stock-search { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .camp-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 680px) {
+      .shell { width: min(100% - 32px, 520px); }
+      .nav { height: 66px; }
+      .menu-toggle { display: block; }
+      .nav-links { display: none; position: absolute; top: 65px; left: 0; right: 0; padding: 16px 22px 20px; background: white; border-bottom: 1px solid var(--line); flex-direction: column; align-items: stretch; }
+      .nav-links.open { display: flex; }
+      .nav-links a { padding: 8px 0; }
+      .nav-actions .btn-outline { display: none; }
+      .hero { padding: 51px 0 35px; }
+      .hero-grid { grid-template-columns: 1fr; }
+      h1 { letter-spacing: -2px; }
+      .hero-copy { font-size: 14px; }
+      .hero-art { min-height: 300px; }
+      .hero-blob { width: 270px; height: 270px; }
+      .float-one { right: -4px; top: 22px; }
+      .float-two { left: -3px; bottom: 19px; }
+      section { padding: 57px 0; }
+      .quick-section { padding-top: 45px; }
+      .section-head { align-items: flex-start; flex-direction: column; }
+      .stats { padding: 19px 0 24px; }
+      .stat { padding: 4px 8px; }
+      .stat strong { font-size: 23px; }
+      .stat span { font-size: 10px; }
+      .quick-card { min-height: 175px; padding: 16px; }
+      .feature-grid, .awareness { grid-template-columns: 1fr; }
+      .feature-grid { gap: 15px; }
+      .awareness { gap: 25px; }
+      .awareness-visual { min-height: 220px; }
+      .camp-grid { grid-template-columns: 1fr; }
+      .cta { align-items: flex-start; flex-direction: column; padding: 25px; }
+      .footer-top, .footer-bottom { flex-direction: column; }
+      .footer-links { gap: 14px; }
+      .form-grid { grid-template-columns: 1fr; }
+      .span-2 { grid-column: auto; }
+      .dialog-head { padding: 18px 18px 14px; }
+      .dialog-body { padding: 17px 18px 20px; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="shell nav">
+      <a class="brand" href="#home" aria-label="LifeDrop home">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M12 2.8S5.5 10 5.5 14.8a6.5 6.5 0 0 0 13 0C18.5 10 12 2.8 12 2.8Z" fill="currentColor"/><path d="M9 15.2a3 3 0 0 0 3 3" stroke="#c6283d" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+        <span>Life<span>Drop</span></span>
+      </a>
+      <nav class="nav-links" id="navLinks" aria-label="Main navigation">
+        <a href="#home">Home</a><a href="#availability">Find blood</a><a href="#stocks">Blood stocks</a><a href="#camps">Donation camps</a><a href="#about">About</a><a href="/login">Login</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="btn btn-outline btn-small" type="button" data-open="requestDialog">Emergency request</button>
+        <button class="btn btn-primary btn-small" type="button" data-open="registerDialog">Register <span aria-hidden="true">↗</span></button>
+        <button class="menu-toggle" id="menuToggle" type="button" aria-label="Open navigation" aria-expanded="false">☰</button>
+      </div>
+    </div>
+  </header>
+  <main>
+    <section class="hero" id="home">
+      <div class="shell hero-grid">
+        <div>
+          <span class="eyebrow"><i></i> Together, we can save lives</span>
+          <h1>Every drop counts.<br><em>Every life matters.</em></h1>
+          <p class="hero-copy">A community-first place to explore blood donation, find directory information, and share a request. Small acts of kindness can make a life-changing difference.</p>
+          <div class="hero-actions">
+            <button class="btn btn-primary" type="button" data-open="registerDialog" data-role="donor">♥ &nbsp;Donate blood</button>
+            <button class="btn btn-outline" type="button" data-open="requestDialog">＋ &nbsp;Request blood</button>
+          </div>
+          <div class="trust-line"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m5 12 4 4L19 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z" stroke="currentColor" stroke-width="1.6"/></svg> Phone numbers are shown only with explicit consent.</div>
+        </div>
+        <div class="hero-art" aria-label="Blood donation illustration">
+          <div class="hero-blob"></div>
+          <div class="float-pill float-one"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 21s-8-4.5-8-11a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 20 10c0 6.5-8 11-8 11Z" stroke="currentColor" stroke-width="1.8"/></svg> Give a little. Help a lot.</div>
+          <div class="hero-illustration">
+            <img src="/assets/blood-donation-hero.jpg" alt="A healthcare professional assisting a volunteer during a blood donation" width="1200" height="800" fetchpriority="high">
+          </div>
+          <div class="float-pill float-two"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3v18M3 12h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> One donation can make a difference</div>
+        </div>
+      </div>
+    </section>
+    <div class="stats">
+      <div class="shell stats-grid">
+        <div class="stat"><strong id="donorCount">Login</strong><span>Required for live availability</span></div>
+        <div class="stat"><strong id="requestCount">Login</strong><span>Shared blood requests</span></div>
+      </div>
+    </div>
+    <section class="quick-section">
+      <div class="shell">
+        <div class="section-head"><div><p class="section-kicker">How can we help?</p><h2>Start with what you need</h2><p class="section-desc">Explore the portal's demo features. For urgent medical help, contact your hospital or emergency services now.</p></div></div>
+        <div class="quick-grid">
+          <a href="/login" class="quick-card"><span class="icon-box"><svg viewBox="0 0 24 24" fill="none"><circle cx="10.8" cy="10.8" r="6.8" stroke="currentColor" stroke-width="1.8"/><path d="m16 16 5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span><h3>Find available donors</h3><p>Log in to check opted-in donors in your city.</p><span class="arrow">Log in to search →</span></a>
+          <a href="#camps" class="quick-card"><span class="icon-box"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M16 3v4M8 3v4M3 10h18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span><h3>Find donation camps</h3><p>Browse sample camp listings and register interest.</p><span class="arrow">Explore camps →</span></a>
+        </div>
+      </div>
+    </section>
+    <section class="soft-section" id="availability">
+      <div class="shell">
+        <div class="section-head"><div><p class="section-kicker">Live donor availability</p><h2>Check available donors</h2><p class="section-desc">Availability search is for logged-in accounts only. Contact details are displayed only when a donor explicitly opts in. Listings expire after 24 hours.</p></div></div>
+        <div class="panel">
+          <p>Log in to your LifeDrop account to check donors who have confirmed their current availability.</p>
+          <a class="btn btn-primary" href="/login">Log in to check availability</a>
+        </div>
+      </div>
+    </section>
+    <section id="stocks">
+      <div class="shell">
+        <div class="section-head"><div><p class="section-kicker">Reported blood stocks</p><h2>Check a hospital's blood stock</h2><p class="section-desc">Choose a location and hospital or blood centre to see its reported units by blood group. The results show stock only, not hospital contact or address details.</p></div></div>
+        <div class="panel">
+          <form class="stock-search" id="hospitalSearchForm">
+            <div class="field"><label for="hospitalState">State</label><select id="hospitalState" name="state_code" required disabled><option value="">Loading states…</option></select></div>
+            <div class="field"><label for="hospitalDistrict">District</label><select id="hospitalDistrict" name="district_id" disabled><option value="">All districts</option></select></div>
+            <div class="field"><label for="hospitalComponent">Blood component</label><select id="hospitalComponent" name="component_id" required disabled><option value="">Loading components…</option></select></div>
+            <div class="field"><label for="hospitalSelect">Hospital / blood centre</label><select id="hospitalSelect" name="hospital_code" required disabled><option value="">Select a location first</option></select></div>
+            <button class="btn btn-primary" type="submit" disabled>Check blood stock</button>
+          </form>
+          <p class="form-hint" id="hospitalMessage" aria-live="polite">Loading verified stock filters…</p>
+          <div class="stock-results" id="hospitalStockResults" aria-live="polite"></div>
+          <div class="notice" role="note" style="margin-top:20px"><div><strong>Important:</strong> Stock figures are reports from blood centres, not a reservation or guarantee. Verify availability directly with the centre before travelling. For emergencies, contact the patient's hospital immediately.</div></div>
+        </div>
+      </div>
+    </section>
+    <section class="soft-section" id="urgent">
+      <div class="shell">
+        <div class="section-head"><div><p class="section-kicker">Urgent requests</p><h2>Community request board</h2><p class="section-desc">Sign in to view request summaries across devices. Request status is self-reported; the board does not verify requests or notify hospitals. Do not rely on it for urgent care.</p></div><button class="btn btn-outline btn-small" type="button" data-open="requestDialog">＋ Submit a request</button></div>
+        <div class="notice" role="note" style="margin-bottom:18px"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 9v4m0 4h.01M10.3 3.9 2.6 17.2A2 2 0 0 0 4.3 20h15.4a2 2 0 0 0 1.7-2.8L13.7 3.9a2 2 0 0 0-3.4 0Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><div><strong>Emergency help:</strong> Contact the patient's hospital and emergency medical services immediately. Do not wait for a website response. Transfusion decisions must be made by qualified healthcare professionals.</div></div>
+        <p class="form-message" id="requestBoardMessage" aria-live="polite"></p>
+        <div class="panel" id="requestList"></div>
+      </div>
+    </section>
+    <section id="camps">
+      <div class="shell">
+        <div class="section-head"><div><p class="section-kicker">Give together</p><h2>Upcoming donation camps</h2><p class="section-desc">These illustrative camps are demo data. Confirm event details with the organiser before attending.</p></div></div>
+        <div class="camp-grid" id="campList"></div>
+      </div>
+    </section>
+    <section class="soft-section" id="about">
+      <div class="shell awareness">
+        <div class="awareness-visual" aria-hidden="true"><svg class="big-drop" viewBox="0 0 100 120" fill="none"><path d="M50 5S15 44 15 72a35 35 0 0 0 70 0C85 44 50 5 50 5Z" fill="currentColor"/><path d="M35 73a16 16 0 0 0 16 16" stroke="white" stroke-width="5" stroke-linecap="round" opacity=".85"/></svg></div>
+        <div class="awareness-copy"><p class="section-kicker">Why donate?</p><h2>A little of your time can mean everything to someone.</h2><p>Safe blood donations help hospitals care for patients after accidents and surgery, during childbirth, and through treatments for serious illnesses. Blood cannot be manufactured; a safe supply depends on voluntary donors.</p><div class="awareness-points"><div class="point"><span class="check">✓</span>Donate through an authorised centre</div><div class="point"><span class="check">✓</span>Follow the clinician's screening</div><div class="point"><span class="check">✓</span>Share accurate health information</div><div class="point"><span class="check">✓</span>Ask professionals about eligibility</div></div><p class="form-hint" style="margin-top:18px">Eligibility and donation intervals depend on local guidance and individual health. A qualified healthcare professional makes the final assessment.</p></div>
+      </div>
+    </section>
+  </main>
+  <footer>
+    <div class="shell">
+      <div class="footer-top">
+        <div><a class="brand" href="#home"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M12 2.8S5.5 10 5.5 14.8a6.5 6.5 0 0 0 13 0C18.5 10 12 2.8 12 2.8Z" fill="currentColor"/></svg></span><span>Life<span>Drop</span></span></a><p>A student project demonstration. Live donor contact details are available only to logged-in users and only with donor opt-in. This is not an emergency service.</p></div>
+        <div class="footer-links"><a href="#availability">Find blood</a><a href="#stocks">Blood stocks</a><a href="#camps">Donation camps</a><a href="#about">Donation awareness</a></div>
+      </div>
+      <div class="footer-bottom"><span>© 2026 LifeDrop Demo</span><span>Demo data only · No live inventory · No medical advice</span></div>
+    </div>
+  </footer>
+  <dialog id="campRegistrationDialog" aria-labelledby="campRegistrationTitle">
+    <div class="dialog-head">
+      <div>
+        <h2 id="campRegistrationTitle">Register your interest</h2>
+        <p id="campRegistrationDetails"></p>
+      </div>
+      <button class="close-btn" type="button" aria-label="Close" data-close>×</button>
+    </div>
+    <div class="dialog-body">
+      <form id="campRegistrationForm">
+        <input type="hidden" name="camp_id">
+        <div class="form-grid">
+          <div class="field span-2"><label for="campAttendeeName">Your name</label><input id="campAttendeeName" name="name" autocomplete="name" required maxlength="100"></div>
+          <div class="field"><label for="campAttendeePhone">Phone number</label><input id="campAttendeePhone" name="phone" type="tel" autocomplete="tel" inputmode="tel" required maxlength="20"></div>
+          <div class="field"><label for="campAttendeeEmail">Email address</label><input id="campAttendeeEmail" name="email" type="email" autocomplete="email" required maxlength="254"></div>
+          <label class="check-field span-2"><input name="consent" type="checkbox" required><span>I agree that my name, phone number, and email will be stored in the LifeDrop MySQL database for this camp registration. This illustrative listing does not confirm attendance; no organiser notification is sent by this demo.</span></label>
+        </div>
+        <p class="form-message" id="campRegistrationMessage" aria-live="polite"></p>
+        <div class="form-actions">
+          <button class="btn btn-outline" type="button" data-close>Cancel</button>
+          <button class="btn btn-primary" type="submit">Save registration</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+  <dialog id="registerDialog" aria-labelledby="registrationTitle">
+    <div class="dialog-head"><div><h2 id="registrationTitle">Create your LifeDrop account</h2><p>Your account is stored in the configured database. Use a unique password.</p></div><button class="close-btn" type="button" aria-label="Close" data-close>×</button></div>
+    <div class="dialog-body">
+      <form id="registerForm">
+        <div class="form-grid">
+          <div class="field span-2"><label for="registrationRole">I am registering as</label><select id="registrationRole" name="role" required><option value="">Select Donor or Patient</option><option value="donor">Donor</option><option value="patient">Patient</option></select></div>
+          <div class="field span-2"><label for="registrationName">Full name</label><input id="registrationName" name="name" autocomplete="name" required maxlength="100"></div>
+          <div class="field"><label for="registrationEmail">Email address</label><input id="registrationEmail" name="email" type="email" autocomplete="email" required maxlength="150"></div>
+          <div class="field"><label for="registrationPassword">Password</label><input id="registrationPassword" name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="128"></div>
+          <div class="field"><label for="registrationAge">Age</label><input id="registrationAge" name="age" type="number" min="1" max="120" step="1" inputmode="numeric" required></div>
+          <div class="field"><label for="registrationGender">Gender</label><select id="registrationGender" name="gender" required><option value="">Select gender</option><option>Female</option><option>Male</option><option>Non-binary</option><option>Prefer not to say</option></select></div>
+          <div class="field"><label for="registrationBlood">Blood group</label><select id="registrationBlood" name="blood" required><option value="">Select group</option><option>A+</option><option>A−</option><option>B+</option><option>B−</option><option>AB+</option><option>AB−</option><option>O+</option><option>O−</option></select></div>
+          <div class="field"><label for="registrationPhone">Phone number</label><input id="registrationPhone" name="phone" type="tel" autocomplete="tel" inputmode="tel" pattern="\+?[0-9][0-9 \x2d]{6,18}[0-9]" required></div>
+          <div class="field"><label for="registrationCity">City</label><input id="registrationCity" name="city" required maxlength="80"></div>
+          <div class="field"><label for="registrationState">State / union territory</label><input id="registrationState" name="state" value="Karnataka" autocomplete="address-level1" required maxlength="80"></div>
+          <div class="field"><label for="registrationPlace">Place / area</label><input id="registrationPlace" name="place" required maxlength="100"></div>
+          <div class="field" id="lastDonationField" hidden><label for="lastDonation">Last donation date <span class="form-hint">(optional)</span></label><input id="lastDonation" name="lastDonation" type="date"></div>
+          <label class="check-field span-2" id="donorInterestField" hidden><input name="availability" type="checkbox"><span>I confirm that I am currently available to be contacted about donation opportunities. This status expires after 24 hours and does not confirm medical eligibility.</span></label>
+          <label class="check-field span-2" id="publicContactField" hidden><input name="publicContactConsent" type="checkbox"><span>I explicitly agree that my name, blood group, city/state/area, and phone number may be displayed to people searching availability for up to 24 hours. I understand anyone using this demo may see these details.</span></label>
+          <label class="check-field span-2"><input name="consent" type="checkbox" required><span>I consent to creating an account and storing these profile details in the configured MySQL database. Public display of donor contact details requires the separate opt-in above.</span></label>
+        </div>
+        <div class="form-message" id="registrationMessage" aria-live="polite"></div>
+        <div class="form-actions"><button class="btn btn-outline" type="button" data-close>Cancel</button><button class="btn btn-primary" type="submit">Register</button></div>
+      </form>
+    </div>
+  </dialog>
+  <dialog id="requestDialog" aria-labelledby="requestTitle">
+    <div class="dialog-head"><div><h2 id="requestTitle">Submit a blood request</h2><p>Sign in is required. Request information is stored in the configured MySQL database.</p></div><button class="close-btn" type="button" aria-label="Close" data-close>×</button></div>
+    <div class="dialog-body">
+      <div id="requestLoginNotice">
+        <p id="requestAccessMessage">Checking your login status…</p>
+        <a class="btn btn-primary" href="/login?next=%2F%23urgent" hidden>Log in to continue</a>
+      </div>
+      <form id="requestForm" hidden>
+        <div class="form-grid">
+          <div class="field"><label for="patientRef">Patient name or reference ID</label><input id="patientRef" name="patient" required maxlength="100"></div>
+          <div class="field"><label for="requestBlood">Required blood group</label><select id="requestBlood" name="blood" required><option value="">Select group</option><option>A+</option><option>A−</option><option>B+</option><option>B−</option><option>AB+</option><option>AB−</option><option>O+</option><option>O−</option></select></div>
+          <div class="field"><label for="units">Units required</label><input id="units" name="units" type="number" min="1" max="20" required></div>
+          <div class="field"><label for="urgency">Urgency</label><select id="urgency" name="urgency" required><option value="">Select urgency</option><option>Urgent</option><option>Within 24 hours</option><option>Planned</option></select></div>
+          <div class="field span-2"><label for="hospital">Hospital name and address</label><input id="hospital" name="hospital" required maxlength="180"></div>
+          <div class="field"><label for="requestCity">City</label><input id="requestCity" name="city" required maxlength="80"></div>
+          <div class="field"><label for="requestDistrict">District</label><input id="requestDistrict" name="district" required maxlength="80"></div>
+          <div class="field"><label for="contactName">Contact person's name</label><input id="contactName" name="contactName" required maxlength="100"></div>
+          <div class="field"><label for="contactPhone">Contact phone</label><input id="contactPhone" name="contactPhone" type="tel" pattern="\+?[0-9][0-9 \x2d]{6,18}[0-9]" required></div>
+          <div class="field"><label for="neededAt">Required date and time</label><input id="neededAt" name="neededAt" type="datetime-local" required></div>
+          <label class="check-field span-2"><input name="requestConsent" type="checkbox" required><span>I consent to storing this request in MySQL. Logged-in users can see a limited summary; patient, hospital, and contact details are not shown on the board. This demo does not notify hospitals.</span></label>
+        </div>
+        <div class="form-message" id="requestMessage" aria-live="polite"></div>
+        <div class="form-actions"><button class="btn btn-outline" type="button" data-close>Cancel</button><button class="btn btn-primary" type="submit">Submit request</button></div>
+      </form>
+    </div>
+  </dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="app.js" defer></script>
+</body>
+</html>
