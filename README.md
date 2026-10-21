@@ -51,6 +51,8 @@ LifeDrop serves its frontend and API from one Express service. The frontend uses
    DB_NAME=${{MySQL.MYSQLDATABASE}}
    ```
 
+   Enter these values manually; do not bulk-import `.env.example`, whose values are examples only.
+
    Generate a session secret in PowerShell with:
 
    ```powershell
