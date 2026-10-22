@@ -122,6 +122,11 @@
     .stock-search { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: end; gap: 12px; }
     .stock-search .btn { grid-column: 1 / -1; }
     .stock-results { margin-top: 20px; }
+    .stock-contact { margin-bottom: 15px; padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: #fffafb; }
+    .stock-contact h3 { margin: 0 0 7px; font-size: 15px; }
+    .stock-contact p { margin: 4px 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+    .stock-contact strong { color: var(--ink); }
+    .stock-contact a { color: var(--red); font-weight: 750; }
     .stock-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(115px, 1fr)); gap: 9px; margin-top: 15px; }
     .stock-group { padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: #fffafb; text-align: center; }
     .stock-group strong { display: block; color: var(--red); font-size: 16px; }
@@ -287,7 +292,7 @@
     </section>
     <section id="stocks">
       <div class="shell">
-        <div class="section-head"><div><p class="section-kicker">Reported blood stocks</p><h2>Check a hospital's blood stock</h2><p class="section-desc">Choose a location and hospital or blood centre to see its reported units by blood group. The results show stock only, not hospital contact or address details.</p></div></div>
+        <div class="section-head"><div><p class="section-kicker">Reported blood stocks</p><h2>Check a hospital's blood stock</h2><p class="section-desc">Choose a location and hospital or blood centre to see its reported units by blood group, plus any contact details provided by the stock service.</p></div></div>
         <div class="panel">
           <form class="stock-search" id="hospitalSearchForm">
             <div class="field"><label for="hospitalState">State</label><select id="hospitalState" name="state_code" required disabled><option value="">Loading states…</option></select></div>
@@ -298,14 +303,14 @@
           </form>
           <p class="form-hint" id="hospitalMessage" aria-live="polite">Loading verified stock filters…</p>
           <div class="stock-results" id="hospitalStockResults" aria-live="polite"></div>
-          <div class="notice" role="note" style="margin-top:20px"><div><strong>Important:</strong> Stock figures are reports from blood centres, not a reservation or guarantee. Verify availability directly with the centre before travelling. For emergencies, contact the patient's hospital immediately.</div></div>
+          <div class="notice" role="note" style="margin-top:20px"><div><strong>Important:</strong> Stock figures are reports from blood centres, not a reservation or guarantee. Verify availability directly with the centre before travelling. For emergencies in India, contact the patient's hospital and call <a href="tel:112"><strong>112</strong></a>.</div></div>
         </div>
       </div>
     </section>
     <section class="soft-section" id="urgent">
       <div class="shell">
         <div class="section-head"><div><p class="section-kicker">Urgent requests</p><h2>Community request board</h2><p class="section-desc">Sign in to view request summaries across devices. Request status is self-reported; the board does not verify requests or notify hospitals. Do not rely on it for urgent care.</p></div><button class="btn btn-outline btn-small" type="button" data-open="requestDialog">＋ Submit a request</button></div>
-        <div class="notice" role="note" style="margin-bottom:18px"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 9v4m0 4h.01M10.3 3.9 2.6 17.2A2 2 0 0 0 4.3 20h15.4a2 2 0 0 0 1.7-2.8L13.7 3.9a2 2 0 0 0-3.4 0Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><div><strong>Emergency help:</strong> Contact the patient's hospital and emergency medical services immediately. Do not wait for a website response. Transfusion decisions must be made by qualified healthcare professionals.</div></div>
+        <div class="notice" role="note" style="margin-bottom:18px"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 9v4m0 4h.01M10.3 3.9 2.6 17.2A2 2 0 0 0 4.3 20h15.4a2 2 0 0 0 1.7-2.8L13.7 3.9a2 2 0 0 0-3.4 0Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><div><strong>Emergency help:</strong> Contact the patient's hospital and emergency medical services immediately. In India, call <a href="tel:112"><strong>112</strong></a>. Do not wait for a website response. Transfusion decisions must be made by qualified healthcare professionals.</div></div>
         <p class="form-message" id="requestBoardMessage" aria-live="polite"></p>
         <div class="panel" id="requestList"></div>
       </div>

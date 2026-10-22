@@ -1045,6 +1045,12 @@ function parseReportedStockGroups(stock, bloodGroups) {
   });
 }
 
+function getHospitalEmail(record) {
+  const email = record.hospitalemail || record.hospitalEmail || record.hospital_email ||
+    record.email || record.emailId || record.email_id || '';
+  return typeof email === 'string' ? email.trim() : '';
+}
+
 app.get('/api/blood-stocks/filters', rateLimit(30, 60 * 1000), async (req, res) => {
   try {
     const master = await getBloodStockMaster();
@@ -1097,6 +1103,8 @@ app.get('/api/blood-stocks/hospitals', rateLimit(30, 60 * 1000), async (req, res
         code: String(record.hospitalCode),
         name: record.hospitalname,
         address: record.hospitaladd || '',
+        phone: record.hospitalcontact || '',
+        email: getHospitalEmail(record),
         type: record.hospitalType || record.type || ''
       });
     }
@@ -1138,9 +1146,12 @@ app.get('/api/blood-stocks/by-hospital', rateLimit(30, 60 * 1000), async (req, r
     const centres = records
       .filter(record => String(record.hospitalCode) === hospitalCode)
       .map(record => ({
+        code: String(record.hospitalCode),
         name: record.hospitalname || 'Blood centre',
         address: record.hospitaladd || '',
         contact: record.hospitalcontact || '',
+        phone: record.hospitalcontact || '',
+        email: getHospitalEmail(record),
         type: record.hospitalType || record.type || '',
         updated_at: record.entrydate || null,
         live: record.offline === '0',

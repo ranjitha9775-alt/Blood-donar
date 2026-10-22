@@ -38,6 +38,7 @@
         return result;
       }
       let stockFilters = null;
+      let stockHospitals = [];
       function setStockOptions(select, options, firstLabel) {
         select.replaceChildren(new Option(firstLabel, ""));
         options.forEach(option => select.add(new Option(option.name, option.code)));
@@ -54,6 +55,7 @@
         const message = document.getElementById("hospitalMessage");
         hospitalSelect.disabled = true;
         button.disabled = true;
+        stockHospitals = [];
         results.replaceChildren();
         message.textContent = "Loading hospitals and blood centres for this location…";
         const params = new URLSearchParams({
@@ -63,6 +65,7 @@
         if (form.elements.district_id.value) params.set("district_id", form.elements.district_id.value);
         try {
           const data = await requestJson(`/api/blood-stocks/hospitals?${params}`);
+          stockHospitals = data.hospitals;
           hospitalSelect.replaceChildren(new Option(
             data.hospitals.length ? "Choose a hospital or blood centre" : "No hospitals listed for this location",
             ""
@@ -84,14 +87,38 @@
         const message = document.getElementById("hospitalMessage");
         const checkedAt = new Date(data.checked_at);
         const checkedLabel = Number.isNaN(checkedAt.getTime()) ? "time unavailable" : checkedAt.toLocaleString();
-        const centre = data.centres[0];
-        if (!centre || !centre.stocks.length) {
+        const selectedHospital = stockHospitals.find(hospital =>
+          hospital.code === document.getElementById("hospitalSearchForm").elements.hospital_code.value
+        );
+        const stockCentre = data.centres[0];
+        const centre = {
+          ...selectedHospital,
+          ...stockCentre,
+          phone: stockCentre?.phone || stockCentre?.contact || selectedHospital?.phone || "",
+          email: stockCentre?.email || selectedHospital?.email || "",
+          stocks: stockCentre?.stocks || []
+        };
+        const email = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(centre.email) ? centre.email : "";
+        const phone = typeof centre.phone === "string" ? centre.phone.trim() : "";
+        const phoneHref = phone.replace(/[^\d+]/g, "");
+        const contactHtml = `
+          <div class="stock-contact">
+            <h3>${escapeHtml(centre.name || "Selected hospital or blood centre")}</h3>
+            ${centre.address ? `<p>${escapeHtml(centre.address)}</p>` : ""}
+            <p><strong>Hospital number:</strong> ${phone
+              ? `<a href="tel:${escapeHtml(phoneHref)}">${escapeHtml(phone)}</a>`
+              : "Not listed by the blood-stock source"}</p>
+            <p><strong>Hospital email:</strong> ${email
+              ? `<a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>`
+              : "Not listed by the blood-stock source"}</p>
+          </div>`;
+        if (!stockCentre || !centre.stocks.length) {
           message.textContent = `No blood-group units were reported for this selection · Checked ${checkedLabel}.`;
-          results.innerHTML = '<div class="empty-state">No blood-stock quantities were returned. This does not confirm the centre has no stock; contact it to verify.</div>';
+          results.innerHTML = `${contactHtml}<div class="empty-state">No blood-stock quantities were returned. This does not confirm the centre has no stock; contact it to verify.</div>`;
           return;
         }
         message.textContent = `${data.component} · ${data.district ? `${data.district}, ` : ""}${data.state} · Checked ${checkedLabel}.`;
-        results.innerHTML = `<div class="stock-groups">${centre.stocks.map(stock => `
+        results.innerHTML = `${contactHtml}<div class="stock-groups">${centre.stocks.map(stock => `
           <div class="stock-group"><strong>${escapeHtml(stock.blood_group)}</strong><span>${stock.units === null ? "Not reported" : `${escapeHtml(stock.units)} units`}</span></div>
         `).join("")}</div>`;
       }
