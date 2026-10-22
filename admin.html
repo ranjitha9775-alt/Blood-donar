@@ -103,10 +103,10 @@
         <div class="data-tools">
           <div class="filter-field"><label for="donorSearch">Search donors</label><input id="donorSearch" type="search" placeholder="Name, username, phone, city…"></div>
           <div class="filter-field"><label for="donorBloodFilter">Blood group</label><select id="donorBloodFilter"><option value="">All blood groups</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
-          <div class="filter-field"><label for="donorAvailabilityFilter">Availability</label><select id="donorAvailabilityFilter"><option value="">All donors</option><option>Available</option><option>Not available</option></select></div>
+          <div class="filter-field"><label for="donorAvailabilityFilter">Availability</label><select id="donorAvailabilityFilter"><option value="">All donors</option><option>Available</option><option>Not Available</option><option>Needs Confirmation</option></select></div>
           <span class="record-count" id="donorResultCount" aria-live="polite"></span>
         </div>
-        <div class="table-scroll"><table><thead><tr><th>Name</th><th>Username</th><th>Phone</th><th>Blood group</th><th>City</th><th>Area</th><th>Availability</th><th>Email</th><th>Last donation</th><th>Registered</th></tr></thead><tbody id="donorRows"></tbody></table></div>
+        <div class="table-scroll"><table><thead><tr><th>Name</th><th>Username</th><th>Phone</th><th>Blood group</th><th>City</th><th>Area</th><th>Availability</th><th>Last confirmed</th><th>Email</th><th>Last donation</th><th>Registered</th></tr></thead><tbody id="donorRows"></tbody></table></div>
       </section>
       <section class="panel data-panel" id="patientManagement" aria-labelledby="patientManagementTitle">
         <div class="data-heading"><h2 id="patientManagementTitle">Patient Management</h2><p class="muted">Patient accounts and their blood request status</p></div>

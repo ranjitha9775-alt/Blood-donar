@@ -81,6 +81,7 @@
       donor.city,
       donor.place,
       donor.availability_status,
+      formatDate(donor.last_confirmed_at),
       donor.email,
       donor.last_donation_date,
       formatDate(donor.registered_at)

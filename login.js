@@ -6,6 +6,7 @@
   const loginMessage = document.getElementById("loginMessage");
   const searchMessage = document.getElementById("searchMessage");
   const searchResults = document.getElementById("searchResults");
+  let emergencyResponseConsent = false;
   const registrationComplete = new URLSearchParams(window.location.search).get("registered") === "1";
   const requestedReturn = new URLSearchParams(window.location.search).get("next");
   let returnUrl = null;
@@ -73,10 +74,12 @@
     const message = document.getElementById("donorAvailabilityMessage");
     try {
       const data = await requestJson("/api/availability/status");
-      document.getElementById("donorAvailabilityConsent").checked = data.is_available;
+      document.getElementById("donorAvailabilityConsent").checked =
+        data.is_available && data.public_contact_consent;
+      emergencyResponseConsent = data.emergency_response_consent;
       message.textContent = data.is_available
-        ? `Your listing is live until ${new Date(data.available_until).toLocaleString()}.`
-        : "You are not currently listed as an available donor.";
+        ? `Your confirmation is current until ${new Date(data.available_until).toLocaleString()}.`
+        : `Your status is ${data.status}. Confirm again to refresh availability.`;
     } catch (error) {
       console.error("Could not load donor availability status:", error);
       message.textContent = error.message;
@@ -138,7 +141,7 @@
           const availableUntil = new Date(donor.available_until);
           return `<article class="result-card">
             <h3>${escapeHtml(donor.name)} · ${escapeHtml(donor.blood_group)}</h3>
-            <p>${escapeHtml(donor.place)}, ${escapeHtml(donor.city)}, ${escapeHtml(donor.state)}</p>
+            <p>${escapeHtml(donor.city)}, ${escapeHtml(donor.state)}</p>
             <p>Available until ${escapeHtml(availableUntil.toLocaleString())}</p>
             <p>Phone: <a href="tel:${escapeHtml(donor.phone)}">${escapeHtml(donor.phone)}</a></p>
           </article>`;
@@ -168,13 +171,16 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          is_available: document.getElementById("donorAvailabilityConsent").checked,
-          public_contact_consent: document.getElementById("donorAvailabilityConsent").checked
+          status: document.getElementById("donorAvailabilityConsent").checked
+            ? "available"
+            : "not_available",
+          public_contact_consent: document.getElementById("donorAvailabilityConsent").checked,
+          emergency_response_consent: emergencyResponseConsent
         })
       });
       message.textContent = data.is_available
-        ? `Your listing is live until ${new Date(data.available_until).toLocaleString()}.`
-        : "Your listing has been turned off.";
+        ? `Your confirmation is saved until ${new Date(data.available_until).toLocaleString()}.`
+        : "Your status has been saved as Not Available.";
       await searchAvailableDonors();
     } catch (error) {
       console.error("Donor availability could not be updated:", error);

@@ -383,7 +383,7 @@
           </div>
           <div class="field" id="lastDonationField" hidden><label for="lastDonation">Last donation date <span class="form-hint">(optional)</span></label><input id="lastDonation" name="lastDonation" type="date"></div>
           <label class="check-field span-2" id="donorInterestField" hidden><input name="availability" type="checkbox"><span>I confirm that I am currently available to be contacted about donation opportunities. This status expires after 24 hours and does not confirm medical eligibility.</span></label>
-          <label class="check-field span-2" id="publicContactField" hidden><input name="publicContactConsent" type="checkbox"><span>I explicitly agree that my name, blood group, city/state/area, and phone number may be displayed to people searching availability for up to 24 hours. I understand anyone using this demo may see these details.</span></label>
+          <label class="check-field span-2" id="publicContactField" hidden><input name="publicContactConsent" type="checkbox"><span>I explicitly agree that my name, blood group, city/state, and phone number may be displayed to people searching availability for up to 24 hours. My exact area is not shown. I understand people using this demo may see these details.</span></label>
           <label class="check-field span-2"><input name="consent" type="checkbox" required><span>I consent to creating an account and storing these profile details in the configured MySQL database. Public display of donor contact details requires the separate opt-in above.</span></label>
         </div>
         <div class="form-message" id="registrationMessage" aria-live="polite"></div>
@@ -404,13 +404,15 @@
           <div class="field"><label for="requestBlood">Required blood group</label><select id="requestBlood" name="blood" required><option value="">Select group</option><option>A+</option><option>A−</option><option>B+</option><option>B−</option><option>AB+</option><option>AB−</option><option>O+</option><option>O−</option></select></div>
           <div class="field"><label for="units">Units required</label><input id="units" name="units" type="number" min="1" max="20" required></div>
           <div class="field"><label for="urgency">Urgency</label><select id="urgency" name="urgency" required><option value="">Select urgency</option><option>Urgent</option><option>Within 24 hours</option><option>Planned</option></select></div>
-          <div class="field span-2"><label for="hospital">Hospital name and address</label><input id="hospital" name="hospital" required maxlength="180"></div>
+          <div class="field span-2"><label for="hospital">Hospital name</label><input id="hospital" name="hospitalName" required maxlength="150"></div>
+          <div class="field span-2"><label for="hospitalAddress">Hospital address (private)</label><input id="hospitalAddress" name="hospitalAddress" maxlength="180"></div>
           <div class="field"><label for="requestCity">City</label><input id="requestCity" name="city" required maxlength="80"></div>
           <div class="field"><label for="requestDistrict">District</label><input id="requestDistrict" name="district" required maxlength="80"></div>
           <div class="field"><label for="contactName">Contact person's name</label><input id="contactName" name="contactName" required maxlength="100"></div>
           <div class="field"><label for="contactPhone">Contact phone</label><input id="contactPhone" name="contactPhone" type="tel" pattern="\+?[0-9][0-9 \x2d]{6,18}[0-9]" required></div>
           <div class="field"><label for="neededAt">Required date and time</label><input id="neededAt" name="neededAt" type="datetime-local" required></div>
-          <label class="check-field span-2"><input name="requestConsent" type="checkbox" required><span>I consent to storing this request in MySQL. Logged-in users can see a limited summary; patient, hospital, and contact details are not shown on the board. This demo does not notify hospitals.</span></label>
+          <label class="check-field span-2"><input name="requestConsent" type="checkbox" required><span>I consent to storing this request in MySQL. Logged-in users can see a limited summary; patient, hospital, and contact details are not shown on the board.</span></label>
+          <label class="check-field span-2"><input name="matchDonors" type="checkbox"><span>Optional: for an Urgent request, create in-app notifications for currently confirmed donors who consented to matching and have the same blood group and city. Share only the blood group, hospital name, city, and district; do not share the patient's name, hospital address, or contact details. This exact-group match does not establish medical compatibility; the hospital or blood bank must verify it. No email or SMS is sent, and no response is guaranteed.</span></label>
         </div>
         <div class="form-message" id="requestMessage" aria-live="polite"></div>
         <div class="form-actions"><button class="btn btn-outline" type="button" data-close>Cancel</button><button class="btn btn-primary" type="submit">Submit request</button></div>

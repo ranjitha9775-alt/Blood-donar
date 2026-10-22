@@ -3,12 +3,96 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LifeDrop - Donor Dashboard</title>
+  <meta name="theme-color" content="#c6283d">
+  <title>Donor Dashboard — LifeDrop</title>
+  <style>
+    :root { color-scheme: light; --red: #c6283d; --ink: #20232b; --muted: #687080; --line: #e4e7ed; --canvas: #f5f7fa; --green: #167447; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--canvas); color: var(--ink); font: 15px/1.55 system-ui, "Segoe UI", sans-serif; }
+    header { background: #fff; border-bottom: 1px solid var(--line); }
+    .nav, main { width: min(900px, calc(100% - 32px)); margin: auto; }
+    .nav { min-height: 64px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    a { color: inherit; text-decoration: none; }
+    .brand { font-size: 20px; font-weight: 800; }
+    .brand span { color: var(--red); }
+    main { padding: 30px 0 56px; }
+    h1 { margin: 0 0 4px; font-size: clamp(26px, 5vw, 34px); }
+    h2 { margin: 0; font-size: 21px; }
+    .muted { color: var(--muted); }
+    .card { margin-top: 20px; padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: #fff; box-shadow: 0 8px 28px #20232b0a; }
+    .status-panel { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px; margin: 18px 0; padding: 15px; border-radius: 12px; background: #f7f8fa; }
+    .status-label { display: inline-block; padding: 5px 10px; border-radius: 999px; background: #e7e9ee; font-weight: 750; }
+    .status-label.available { color: #145b39; background: #e2f4e9; }
+    .status-label.not-available { color: #a51f32; background: #fde8eb; }
+    .status-label.needs-confirmation { color: #765400; background: #fff2cc; }
+    .choice-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+    .choice { display: flex; align-items: center; gap: 10px; min-height: 55px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; font-weight: 700; }
+    .choice input { width: 18px; height: 18px; accent-color: var(--green); }
+    .choice.available { color: var(--green); }
+    .choice.not-available { color: #a51f32; }
+    .consent { display: flex; align-items: flex-start; gap: 10px; margin: 14px 0; color: #474d58; font-size: 13px; }
+    .consent input { flex: 0 0 18px; width: 18px; height: 18px; margin-top: 2px; accent-color: var(--red); }
+    button { min-height: 44px; padding: 0 16px; border: 0; border-radius: 9px; background: var(--red); color: #fff; font: inherit; font-weight: 750; cursor: pointer; }
+    button:disabled { opacity: .65; cursor: wait; }
+    .message { min-height: 22px; margin: 12px 0 0; color: var(--muted); }
+    .request { padding: 15px 0; border-top: 1px solid var(--line); }
+    .request:first-child { border-top: 0; }
+    .request-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 10px; }
+    .request-actions button:last-child { background: #555d69; }
+    .button-secondary { min-height: 38px; background: white; color: var(--ink); border: 1px solid var(--line); }
+    .button-secondary:hover { background: #f7f8fa; }
+    .notification-unread { color: #a51f32; font-weight: 750; }
+    .request-details { margin-top: 12px; padding: 12px; border-radius: 10px; background: #f8f9fb; }
+    .request-details p { margin: 7px 0; }
+    .safety { padding: 12px 14px; border-left: 3px solid #e1aa29; background: #fff8e6; color: #5c4a1d; font-size: 13px; }
+    [hidden] { display: none !important; }
+    @media (max-width: 520px) { .card { padding: 17px; } .choice-list { grid-template-columns: 1fr; } .nav { align-items: flex-start; padding: 12px 0; } }
+  </style>
 </head>
 <body>
-  <h1>LifeDrop Blood Donor Dashboard</h1>
-  <p id="welcome">Checking your login...</p>
-  <button id="logout-button" hidden>Logout</button>
-  <script src="dashboard.js" defer></script>
+  <header>
+    <div class="nav">
+      <a class="brand" href="/">Life<span>Drop</span> Donor</a>
+      <button id="logout-button" type="button" hidden>Log out</button>
+    </div>
+  </header>
+  <main>
+    <h1>Donor dashboard</h1>
+    <p class="muted" id="welcome">Checking your login…</p>
+
+    <section class="card" id="availabilityCard" aria-labelledby="availabilityTitle" hidden>
+      <h2 id="availabilityTitle">Donor Availability Confirmation</h2>
+      <p class="muted">Your confirmation lasts 24 hours. It does not promise that you can donate or accept any particular request.</p>
+      <div class="status-panel">
+        <div><strong>Current status</strong><br><span class="status-label" id="availabilityStatus">Loading…</span></div>
+        <div><strong>Last confirmed</strong><br><time class="muted" id="lastConfirmedAt">Not confirmed yet</time></div>
+      </div>
+      <form id="availabilityForm">
+        <fieldset style="border:0;padding:0;margin:0">
+          <legend><strong>Select your status</strong></legend>
+          <div class="choice-list">
+            <label class="choice available"><input type="radio" name="status" value="available" required> Available to Donate</label>
+            <label class="choice not-available"><input type="radio" name="status" value="not_available" required> Not Available</label>
+          </div>
+        </fieldset>
+        <label class="consent"><input id="publicContactConsent" type="checkbox"><span>Optional: allow my name, blood group, city/state and phone to appear in donor search while my confirmation is current. My exact area will not be shown.</span></label>
+        <label class="consent"><input id="emergencyResponseConsent" type="checkbox"><span>Optional: allow my current availability status and last-confirmed time to be shown for matching urgent requests in my city and blood group. I may choose whether to respond to each request.</span></label>
+        <button id="confirmAvailability" type="submit">Confirm My Availability</button>
+        <p class="message" id="availabilityMessage" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <section class="card" id="emergencyRequestsCard" aria-labelledby="emergencyRequestsTitle" hidden>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px">
+        <h2 id="emergencyRequestsTitle">In-app Notifications</h2>
+        <span id="unreadNotificationCount" class="status-label needs-confirmation" aria-live="polite" hidden>0 unread</span>
+      </div>
+      <p class="muted">Emergency request history appears here when you are confirmed available and have opted into matching. There are no email, SMS, or push notifications configured. Your response is not a promise to arrive.</p>
+      <div class="safety">For urgent needs, patients should contact their hospital or blood bank immediately. Exact blood-group matching is not a medical compatibility check. LifeDrop does not verify requests or guarantee blood availability.</div>
+      <div id="emergencyRequests" aria-live="polite">Loading requests…</div>
+      <p class="message" id="emergencyRequestsMessage" aria-live="polite"></p>
+    </section>
+  </main>
+  <script src="/dashboard.js" defer></script>
 </body>
 </html>

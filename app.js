@@ -451,13 +451,15 @@
               blood: data.get("blood"),
               units: Number(data.get("units")),
               urgency: data.get("urgency"),
-              hospital: String(data.get("hospital")).trim(),
+              hospital_name: String(data.get("hospitalName")).trim(),
+              hospital_address: String(data.get("hospitalAddress") || "").trim(),
               city: String(data.get("city")).trim(),
               district: String(data.get("district")).trim(),
               contact_name: String(data.get("contactName")).trim(),
               contact_phone: String(data.get("contactPhone")).trim(),
               needed_at: neededAtDate.toISOString(),
-              consent: data.has("requestConsent")
+              consent: data.has("requestConsent"),
+              match_donors: data.has("matchDonors")
             })
           });
           const requestId = `LD-${result.request_id}`;
@@ -465,7 +467,9 @@
           message.textContent = "";
           document.getElementById("requestDialog").close();
           await loadBloodRequests();
-          showToast(`Request ${requestId} saved as Pending Verification. No hospital was notified.`);
+          showToast(result.matched_donor_count
+            ? `Request ${requestId} saved. In-app notifications are ready for ${result.matched_donor_count} matching donor(s). No email or SMS was sent.`
+            : `Request ${requestId} saved. No matching donors were available or opted in. No hospital was notified.`);
           document.getElementById("urgent").scrollIntoView({ behavior: "smooth" });
         } catch (error) {
           console.error("Blood-request submission failed:", error);

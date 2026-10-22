@@ -3,12 +3,49 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LifeDrop - Patient Dashboard</title>
+  <meta name="theme-color" content="#c6283d">
+  <title>Patient Dashboard — LifeDrop</title>
+  <style>
+    :root { color-scheme: light; --red: #c6283d; --ink: #20232b; --muted: #687080; --line: #e4e7ed; --canvas: #f5f7fa; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--canvas); color: var(--ink); font: 15px/1.55 system-ui, "Segoe UI", sans-serif; }
+    header { background: #fff; border-bottom: 1px solid var(--line); }
+    .nav, main { width: min(900px, calc(100% - 32px)); margin: auto; }
+    .nav { min-height: 64px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    main { padding: 30px 0 56px; }
+    a { color: inherit; text-decoration: none; }
+    .brand { font-size: 20px; font-weight: 800; }
+    .brand span { color: var(--red); }
+    h1 { margin: 0 0 4px; font-size: clamp(26px, 5vw, 34px); }
+    h2 { margin: 0; font-size: 21px; }
+    .muted { color: var(--muted); }
+    .card { margin-top: 20px; padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: #fff; }
+    .response { padding: 15px 0; border-top: 1px solid var(--line); }
+    .response:first-child { border-top: 0; }
+    .safety { padding: 12px 14px; border-left: 3px solid #e1aa29; background: #fff8e6; color: #5c4a1d; font-size: 13px; }
+    button { min-height: 42px; padding: 0 14px; border: 0; border-radius: 9px; background: var(--red); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+    [hidden] { display: none !important; }
+    @media (max-width: 520px) { .card { padding: 17px; } }
+  </style>
 </head>
 <body>
-  <h1>LifeDrop Patient Dashboard</h1>
-  <p id="welcome">Checking your login...</p>
-  <button id="logout-button" hidden>Logout</button>
-  <script src="dashboard.js" defer></script>
+  <header>
+    <div class="nav">
+      <a class="brand" href="/">Life<span>Drop</span> Patient</a>
+      <button id="logout-button" type="button" hidden>Log out</button>
+    </div>
+  </header>
+  <main>
+    <h1>Patient dashboard</h1>
+    <p class="muted" id="welcome">Checking your login…</p>
+    <section class="card" id="patientResponsesCard" aria-labelledby="patientResponsesTitle" hidden>
+      <h2 id="patientResponsesTitle">Responses to your urgent requests</h2>
+      <p class="muted">Donor responses and availability are self-reported. A response does not guarantee attendance or a donation.</p>
+      <div class="safety">For urgent needs, coordinate with the patient's hospital or blood bank immediately. Do not wait for a website response.</div>
+      <div id="patientResponses" aria-live="polite">Loading responses…</div>
+      <p class="muted" id="patientResponsesMessage" aria-live="polite"></p>
+    </section>
+  </main>
+  <script src="/dashboard.js" defer></script>
 </body>
 </html>

@@ -37,7 +37,67 @@ This link works only when the LifeDrop server is running on your computer. It is
 7. Run `npm install`, then `npm start`.
 8. Open `http://localhost:3000`. Visit `http://localhost:3000/admin` and sign in with `ADMIN_USERNAME` and `ADMIN_PASSWORD`. `localhost` is only your own computer; this is not the public deployed website URL.
 
-On startup, the server creates the `camp_registrations`, `users`, `admin_users`, and `blood_requests` tables, and creates or migrates the `donors` and `patients` tables. It adds a unique username column to `users` and a nullable user link to `patients`; existing accounts without a username can continue to sign in using their email, while new registrations use usernames. Older patient request rows remain visible separately in the dashboard. The database user needs permission to create/alter tables and create indexes. The local health endpoint is `http://localhost:3000/api/health`.
+On startup, the server creates the `camp_registrations`, `users`, `admin_users`, `blood_requests`, and `donor_request_responses` tables, and creates or migrates the `donors` and `patients` tables. It adds donor availability confirmation and consent columns, a unique username column to `users`, and a nullable user link to `patients`; existing accounts without a username can continue to sign in using their email, while new registrations use usernames. Existing donor and patient registrations are preserved, and migrated donors start as **Not Available** until they explicitly confirm a status. Older patient request rows remain visible separately in the dashboard. The database user needs permission to create/alter tables and create indexes. The local health endpoint is `http://localhost:3000/api/health`.
+
+## Donor availability and emergency notifications
+
+- Donors manage availability at `/donar-dashboard.html` (or `/donor-dashboard.html`). Choose **Available to Donate** or **Not Available**, then click **Confirm My Availability**. Status and confirmation time persist in MySQL. A confirmation expires after 24 hours and becomes **Needs Confirmation**; it is never renewed automatically.
+- Donors separately opt into public donor search and in-app emergency matching. Both preferences default off for existing and newly registered donors. Public search shares donor name, blood group, city/state and phone only with the donor's consent; it does not return the donor's exact area.
+- Patients may opt in when submitting an **Urgent** blood request. The app creates durable in-app notifications for donors who have opted in, have a current confirmation and match the exact blood group and city. This is a conservative exact-group match, **not a medical compatibility determination**; compatibility depends on the requested blood component and clinical testing and must be confirmed by the hospital/blood bank.
+- A donor's dashboard notification shows a request ID, blood group, units, hospital name, approximate city/district, request time and response deadline. It does not show the patient's name, address or phone. Donors may respond **Available** or **Not available**. They must confirm before submission; an Available response also requires a still-current availability confirmation and emergency-matching consent. A donor's name/phone are shared with the patient only if that donor separately checks the per-request contact-sharing consent before choosing Available.
+- The donor dashboard keeps unread notifications and response history in MySQL. The patient dashboard shows waiting, positive/negative response totals, no-response and closed states; it never treats silence or **Available** as a secured donation. Patients only receive donor contact details following the donor's explicit per-request consent.
+- The response deadline is set when a request is submitted. Configure `DONOR_RESPONSE_WINDOW_MINUTES` in the private `.env` (default `120`; accepted range `1`–`1440`) before starting the server. `No Response` is derived from the stored deadline; silence is not acceptance or refusal.
+- **External delivery is not configured.** This release sends no email, SMS or push notification; its notification is an in-app MySQL record available when a donor logs in. There are no credentials to add for this feature. To add a provider later, configure its credentials as private server-side environment variables, integrate its delivery API, and report delivery only after the provider confirms success. Reminder sending is also not enabled.
+- For urgent needs, contact the hospital or blood bank immediately. LifeDrop does not verify clinical eligibility, blood inventory, donor arrival or fulfillment.
+
+The additive migrations are [`migrations/001_donor_availability_confirmation.sql`](./migrations/001_donor_availability_confirmation.sql) and [`migrations/002_emergency_in_app_notifications.sql`](./migrations/002_emergency_in_app_notifications.sql). Normal app startup applies missing columns/indexes and creates the response table without deleting existing records. The configured database for this project is `lifedrop`; the separate `blood_donar_portal` database has a different schema and is not used by this app. For a manual migration, take a verified backup and apply only the migration(s) missing from that database, once, before starting the app; don't manually re-run a migration already applied.
+
+### Test and verify the feature
+
+1. In the VS Code terminal, from the project folder, run `npm start`. Sign in with a donor test account at `http://localhost:3000/login`, then open `http://localhost:3000/donar-dashboard.html`. Select **Available to Donate**, opt in to emergency matching, and click **Confirm My Availability**. Verify the saved status and timestamp appear. Refresh the page to verify they reload from MySQL.
+2. In MySQL Workbench, inspect the persisted confirmation (adjust the limit as needed):
+
+   ```sql
+   SELECT user_id, availability_status,
+          CASE
+            WHEN availability_status = 'not_available' THEN 'Not Available'
+            WHEN available = 1 AND availability_expires_at > UTC_TIMESTAMP() THEN 'Available'
+            ELSE 'Needs Confirmation'
+          END AS current_status,
+          last_confirmed_at, availability_expires_at, availability_updated_at
+   FROM donors
+   ORDER BY user_id DESC
+   LIMIT 10;
+   ```
+
+3. To test expiry immediately, use a **dedicated test donor only** and substitute that account's username. This changes only that test donor's expiry; do not run it for real donors:
+
+   ```sql
+   UPDATE donors
+   SET availability_expires_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 MINUTE)
+   WHERE user_id = (
+     SELECT user_id FROM users
+     WHERE username = 'your_test_donor_username' AND role = 'donor'
+   );
+   ```
+
+   Refresh the donor dashboard. It should show **Needs Confirmation**, and the expired donor must not appear in public search or new matches. Click confirm again only if using the test account.
+4. Use a separate patient test account at `http://localhost:3000/patient-dashboard.html`. Submit an **Urgent** request with matching consent checked. Exact blood group and city matches with current confirmation and donor consent receive an in-app notification; no external message is sent. Confirm a different blood group/city, opted-out donor and expired donor are not matched.
+5. Sign in as the donor, open the unread notification with **View Request**, and choose **Available** or **Not available**. The browser asks for confirmation. Optionally check the donor contact-sharing box before choosing Available. The patient dashboard refreshes with response status/counts; contact details appear only when explicitly shared.
+6. Repeat with both response choices, click twice (the second response must be rejected), and test a non-matching donor/unauthorized session (must not view or respond to another donor's notification). Close a test request from the existing request board and verify it shows **Request Closed**. For timeout testing, set `DONOR_RESPONSE_WINDOW_MINUTES=1` in `.env`, restart `npm start`, submit a fresh test request and wait one minute; the patient should see **No Response** and a late donor response must be rejected.
+
+   To inspect response state without exposing patient contact details:
+
+   ```sql
+   SELECT request_id, donor_user_id, response, matched_at,
+          response_deadline, responded_at, read_at,
+          contact_sharing_consent, updated_at
+   FROM donor_request_responses
+   ORDER BY matched_at DESC
+   LIMIT 20;
+   ```
+
+   Use test accounts and remove only their test requests/accounts after verification. A response never guarantees donor arrival or blood availability; coordinate urgent care with the hospital or blood bank.
 
 ## Deploy online with Railway
 
@@ -46,7 +106,7 @@ LifeDrop serves its frontend and API from one Express service. The frontend uses
 1. Confirm that the GitHub repository `ranjitha9775-alt/Blood-donar` contains the project files (including `server.js`, `package.json`, `package-lock.json`, `admin.html`, `admin.js`, and `index.html`). Commit and push updates from your project folder:
 
    ```powershell
-   git add .gitignore .env.example README.md package.json package-lock.json server.js app.js login.js login.html admin.html admin.js index.html assets
+   git add .gitignore .env.example README.md package.json package-lock.json server.js app.js login.js login.html admin.html admin.js index.html assets dashboard.js donar-dashboard.html patient-dashboard.html migrations
    git commit -m "Prepare LifeDrop for deployment"
    git push origin main
    ```
@@ -94,7 +154,7 @@ The app creates its tables on startup. The MySQL user needs permission to create
 
 ## Admin dashboard
 
-- The private dashboard is at `/admin`. It uses its own `admin_users` MySQL table, credentials, rate-limited login endpoint, and HTTP-only admin session cookie; donor/patient login cannot authenticate to it. Dashboard APIs require the separate admin session on the server, so hiding the page in the browser is not the security boundary.
+- The private dashboard is at `/admin`. It uses its own `admin_users` MySQL table, credentials, rate-limited login endpoint, and HTTP-only admin session cookie; donor/patient login cannot authenticate to it. Dashboard APIs require the separate admin session on the server, so hiding the page in the browser is not the security boundary. Donor availability shows `Available`, `Not Available`, or `Needs Confirmation`, along with the last confirmation time.
 - Only the admin dashboard shows private account information. Its separate Donor Management and Patient Management sections load real registrations from the existing `users`, `donors`, `patients`, and `blood_requests` tables. Each section has a total and live search/filter controls; donor availability is derived from current consented listings, and patient fields include required blood group, location, urgency, and request status. The patient-request total includes registration requests in `patients` and later requests in `blood_requests`; legacy request rows remain visible under Patient Management. New registrations appear on the next 15-second refresh, with a manual refresh option.
 - To change the admin username or password, update `ADMIN_USERNAME` / `ADMIN_PASSWORD` in the private environment configuration and restart the server. The app re-hashes and applies those credentials on startup. If either value is missing or invalid, admin login is disabled; donor and patient registration remain available. Never use a shared or reused password.
 
@@ -112,7 +172,7 @@ The app creates its tables on startup. The MySQL user needs permission to create
 
   Patient accounts remain in `users`; only new patient registrations that provide request details create a corresponding row in `patients`. Existing account records are not automatically converted into requests because their hospital, unit, and urgency details were not collected.
 - Login is available at `/login`. After login, the live availability search automatically checks opted-in donors in the account's registered city and state. Donor accounts can explicitly opt in to display their contact details for 24 hours or turn their listing off from the login page. Users can change the city/state or filter by blood group. This is a city/state match, not GPS-based distance; live search is visible only to logged-in accounts, and the API also enforces authentication.
-- A donor appears in search only after opting in to current availability **and** explicitly agreeing to display their name, blood group, city/state/area, and phone number.
+- A donor appears in public search only after confirming current availability **and** explicitly agreeing to display their name, blood group, city/state, and phone number. Exact area is not shown.
 - Availability listings automatically expire after 24 hours. Search is limited to a city and state, with an optional blood-group filter. Donor registration and availability are stored in MySQL.
 - Contact the donor to confirm availability. Donor listings are not blood-bank inventory, and the application does not determine medical compatibility or donor eligibility.
 - Sessions are signed, HTTP-only, same-site cookies and last 12 hours. Without a configured `SESSION_SECRET`, development sessions are invalidated whenever the server restarts.
