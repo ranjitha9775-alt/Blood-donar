@@ -10,6 +10,7 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const AVAILABILITY_HOURS = 24;
 const SESSION_TTL_SECONDS = 60 * 60 * 12;
+const ADMIN_SESSION_COOKIE = 'lifedrop_admin_session';
 const BLOOD_GROUPS = new Set(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']);
 const GENDERS = new Set(['Female', 'Male', 'Non-binary', 'Prefer not to say']);
 const REQUEST_URGENCIES = new Set(['Urgent', 'Within 24 hours', 'Planned']);
@@ -28,6 +29,7 @@ if (!sessionSecret && process.env.NODE_ENV === 'production') {
 }
 const signingSecret = sessionSecret || crypto.randomBytes(32).toString('hex');
 let databaseReady = false;
+let adminReady = false;
 let bloodStockMasterCache = null;
 let bloodStockMasterFetchedAt = 0;
 
@@ -50,6 +52,16 @@ app.get('/login', (req, res) => {
 
 app.get('/login.js', (req, res) => {
   res.sendFile(path.join(__dirname, 'login.js'));
+});
+
+app.get('/admin', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.sendFile(path.join(__dirname, 'admin.html'));
+});
+
+app.get('/admin.js', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.sendFile(path.join(__dirname, 'admin.js'));
 });
 
 app.get('/app.js', (req, res) => {
@@ -142,7 +154,7 @@ function getSessionUserId(req) {
 
 function setSessionCookie(res, userId) {
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  res.setHeader(
+  res.append(
     'Set-Cookie',
     `${SESSION_COOKIE}=${createSessionToken(userId)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_SECONDS}${secure}`
   );
@@ -150,10 +162,87 @@ function setSessionCookie(res, userId) {
 
 function clearSessionCookie(res) {
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  res.setHeader(
+  res.append(
     'Set-Cookie',
     `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secure}`
   );
+}
+
+function createAdminSessionToken(adminId) {
+  const payload = Buffer.from(JSON.stringify({
+    adminId,
+    expiresAt: Date.now() + SESSION_TTL_SECONDS * 1000
+  })).toString('base64url');
+  const signature = crypto.createHmac('sha256', signingSecret).update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+function getAdminSessionId(req) {
+  const cookie = (req.headers.cookie || '')
+    .split(';')
+    .map(part => part.trim())
+    .find(part => part.startsWith(`${ADMIN_SESSION_COOKIE}=`));
+  if (!cookie) return null;
+
+  const [payload, signature] = cookie.slice(ADMIN_SESSION_COOKIE.length + 1).split('.');
+  if (!payload || !signature) return null;
+
+  const expected = crypto.createHmac('sha256', signingSecret).update(payload).digest();
+  const actual = Buffer.from(signature, 'base64url');
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return null;
+
+  try {
+    const session = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    return Number.isSafeInteger(session.adminId) && session.adminId === 1 && session.expiresAt > Date.now()
+      ? session.adminId
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function setAdminSessionCookie(res, adminId) {
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  res.append(
+    'Set-Cookie',
+    `${ADMIN_SESSION_COOKIE}=${createAdminSessionToken(adminId)}; HttpOnly; SameSite=Strict; Path=/api/admin; Max-Age=${SESSION_TTL_SECONDS}${secure}`
+  );
+}
+
+function clearAdminSessionCookie(res) {
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  res.append(
+    'Set-Cookie',
+    `${ADMIN_SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/api/admin; Max-Age=0${secure}`
+  );
+}
+
+function requireAdminConfigured(req, res, next) {
+  res.set('Cache-Control', 'no-store');
+  if (!adminReady) {
+    return res.status(503).json({ message: 'Admin access is not configured. Set ADMIN_USERNAME and ADMIN_PASSWORD, then restart the server.' });
+  }
+  next();
+}
+
+async function requireAdmin(req, res, next) {
+  const adminId = getAdminSessionId(req);
+  if (!adminId) return res.status(401).json({ message: 'Admin login is required.' });
+  try {
+    const [admins] = await db.execute(
+      'SELECT admin_id, username FROM admin_users WHERE admin_id = ? LIMIT 1',
+      [adminId]
+    );
+    if (!admins.length) {
+      clearAdminSessionCookie(res);
+      return res.status(401).json({ message: 'Your admin session is no longer valid. Please log in again.' });
+    }
+    req.admin = admins[0];
+    next();
+  } catch (error) {
+    console.error('Admin session verification failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not verify the admin session.' });
+  }
 }
 
 async function requireSession(req, res, next) {
@@ -161,7 +250,7 @@ async function requireSession(req, res, next) {
   if (!userId) return res.status(401).json({ message: 'Log in to check live donor availability.' });
   try {
     const [users] = await db.execute(
-      'SELECT user_id, full_name, email, role, city, state FROM users WHERE user_id = ? LIMIT 1',
+      'SELECT user_id, username, full_name, email, role, city, state FROM users WHERE user_id = ? LIMIT 1',
       [userId]
     );
     if (!users.length) {
@@ -175,6 +264,23 @@ async function requireSession(req, res, next) {
     res.status(500).json({ message: 'Could not verify your login session.' });
   }
 }
+
+function serveAccountDashboard(role, filename) {
+  return (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (req.user.role !== role) {
+      return res.redirect(req.user.role === 'donor' ? '/donar-dashboard.html' : '/patient-dashboard.html');
+    }
+    res.sendFile(path.join(__dirname, filename));
+  };
+}
+
+app.get('/donar-dashboard.html', requireDatabase, requireSession, serveAccountDashboard('donor', 'donar-dashboard.html'));
+app.get('/donor-dashboard.html', requireDatabase, requireSession, serveAccountDashboard('donor', 'donar-dashboard.html'));
+app.get('/patient-dashboard.html', requireDatabase, requireSession, serveAccountDashboard('patient', 'patient-dashboard.html'));
+app.get('/dashboard.js', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dashboard.js'));
+});
 
 async function initializeDatabase() {
   await db.query(
@@ -191,10 +297,21 @@ async function initializeDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
   );
   await db.query(
+    `CREATE TABLE IF NOT EXISTS admin_users (
+      admin_id TINYINT UNSIGNED NOT NULL,
+      username VARCHAR(80) NOT NULL,
+      password_hash VARCHAR(255) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (admin_id),
+      UNIQUE KEY uq_admin_users_username (username)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await db.query(
     `CREATE TABLE IF NOT EXISTS users (
       user_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
       full_name VARCHAR(100) NOT NULL,
       email VARCHAR(150) NOT NULL,
+      username VARCHAR(32) NULL,
       password_hash VARCHAR(255) NOT NULL,
       role ENUM('donor', 'patient') NOT NULL,
       age TINYINT UNSIGNED NOT NULL,
@@ -209,9 +326,18 @@ async function initializeDatabase() {
       UNIQUE KEY uq_users_email (email)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
   );
+  const [userColumns] = await db.query('SHOW COLUMNS FROM users');
+  if (!userColumns.some(column => column.Field === 'username')) {
+    await db.query('ALTER TABLE users ADD COLUMN username VARCHAR(32) NULL AFTER email');
+  }
+  const [userIndexes] = await db.query('SHOW INDEX FROM users');
+  if (!userIndexes.some(index => index.Key_name === 'uq_users_username')) {
+    await db.query('CREATE UNIQUE INDEX uq_users_username ON users (username)');
+  }
   await db.query(
     `CREATE TABLE IF NOT EXISTS patients (
       patient_id INT NOT NULL AUTO_INCREMENT,
+      user_id BIGINT UNSIGNED NULL,
       patient_name VARCHAR(100) NOT NULL,
       age INT NULL,
       gender VARCHAR(20) NULL,
@@ -230,11 +356,16 @@ async function initializeDatabase() {
   const [patientColumns] = await db.query('SHOW COLUMNS FROM patients');
   const patientColumnNames = new Set(patientColumns.map(column => column.Field));
   const patientMigrations = [
+    ['user_id', 'ALTER TABLE patients ADD COLUMN user_id BIGINT UNSIGNED NULL AFTER patient_id'],
     ['area', "ALTER TABLE patients ADD COLUMN area VARCHAR(100) NOT NULL DEFAULT '' AFTER city"],
     ['request_status', "ALTER TABLE patients ADD COLUMN request_status VARCHAR(32) NOT NULL DEFAULT 'Pending' AFTER urgency"]
   ];
   for (const [columnName, statement] of patientMigrations) {
     if (!patientColumnNames.has(columnName)) await db.query(statement);
+  }
+  const [patientIndexes] = await db.query('SHOW INDEX FROM patients');
+  if (!patientIndexes.some(index => index.Key_name === 'uq_patients_user_id')) {
+    await db.query('CREATE UNIQUE INDEX uq_patients_user_id ON patients (user_id)');
   }
   const patientPhoneColumn = patientColumns.find(column => column.Field === 'contact_number');
   const patientPhoneLength = patientPhoneColumn?.Type.match(/^varchar\((\d+)\)$/i);
@@ -297,8 +428,8 @@ async function initializeDatabase() {
   for (const [columnName, statement] of migrations) {
     if (!columnNames.has(columnName)) await db.query(statement);
   }
-  const [userColumns] = await db.query('SHOW COLUMNS FROM users');
-  if (!userColumns.some(column => column.Field === 'state')) {
+  const [currentUserColumns] = await db.query('SHOW COLUMNS FROM users');
+  if (!currentUserColumns.some(column => column.Field === 'state')) {
     await db.query("ALTER TABLE users ADD COLUMN state VARCHAR(80) NOT NULL DEFAULT '' AFTER city");
   }
   const phoneColumn = columns.find(column => column.Field === 'phone');
@@ -319,6 +450,27 @@ async function initializeDatabase() {
   }
   if (!indexes.some(index => index.Key_name === 'uq_donors_user_id')) {
     await db.query('CREATE UNIQUE INDEX uq_donors_user_id ON donors (user_id)');
+  }
+  const adminUsername = typeof process.env.ADMIN_USERNAME === 'string'
+    ? process.env.ADMIN_USERNAME.trim()
+    : '';
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  adminReady = false;
+  if (adminUsername && typeof adminPassword === 'string' &&
+      adminUsername.length >= 3 && adminUsername.length <= 80 &&
+      adminPassword.length >= 12 && adminPassword.length <= 128) {
+    const passwordHash = await bcrypt.hash(adminPassword, 12);
+    await db.execute(
+      `INSERT INTO admin_users (admin_id, username, password_hash)
+       VALUES (1, ?, ?)
+       ON DUPLICATE KEY UPDATE username = ?, password_hash = ?`,
+      [adminUsername, passwordHash, adminUsername, passwordHash]
+    );
+    adminReady = true;
+  } else if (adminUsername || adminPassword) {
+    console.error('Admin access is disabled: configure ADMIN_USERNAME (3-80 characters) and ADMIN_PASSWORD (12-128 characters).');
+  } else {
+    console.warn('Admin access is disabled until ADMIN_USERNAME and ADMIN_PASSWORD are configured.');
   }
   databaseReady = true;
 }
@@ -729,6 +881,7 @@ app.post('/api/register', rateLimit(5, 15 * 60 * 1000), requireDatabase, async (
   const {
     full_name: fullName,
     email: submittedEmail,
+    username: submittedUsername,
     password,
     role,
     age,
@@ -747,6 +900,7 @@ app.post('/api/register', rateLimit(5, 15 * 60 * 1000), requireDatabase, async (
     state
   } = req.body || {};
   const email = typeof submittedEmail === 'string' ? submittedEmail.trim().toLowerCase() : '';
+  const username = typeof submittedUsername === 'string' ? submittedUsername.trim().toLowerCase() : '';
   const bloodGroup = normalizeBloodGroup(submittedBloodGroup);
   const normalizedPhone = typeof phone === 'string' ? phone.trim() : '';
   const phoneDigits = normalizedPhone.replace(/\D/g, '');
@@ -757,6 +911,7 @@ app.post('/api/register', rateLimit(5, 15 * 60 * 1000), requireDatabase, async (
     !isNonEmptyString(fullName, 100) ||
     !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
     email.length > 150 ||
+    !/^[a-z0-9._-]{3,32}$/.test(username) ||
     typeof password !== 'string' ||
     password.length < 8 ||
     password.length > 128 ||
@@ -791,9 +946,9 @@ app.post('/api/register', rateLimit(5, 15 * 60 * 1000), requireDatabase, async (
     await connection.beginTransaction();
     const [userResult] = await connection.execute(
       `INSERT INTO users
-       (full_name, email, password_hash, role, age, gender, blood_group, phone, city, state, place)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [fullName.trim(), email, passwordHash, role, age, gender, bloodGroup, normalizedPhone, city.trim(), state.trim(), place.trim()]
+       (full_name, email, username, password_hash, role, age, gender, blood_group, phone, city, state, place)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [fullName.trim(), email, username, passwordHash, role, age, gender, bloodGroup, normalizedPhone, city.trim(), state.trim(), place.trim()]
     );
     if (role === 'donor') {
       const availabilityExpiresAt = isAvailable
@@ -824,10 +979,11 @@ app.post('/api/register', rateLimit(5, 15 * 60 * 1000), requireDatabase, async (
     if (role === 'patient') {
       await connection.execute(
         `INSERT INTO patients
-         (patient_name, age, gender, blood_group, hospital_name, city, area,
+         (user_id, patient_name, age, gender, blood_group, hospital_name, city, area,
           contact_number, units_required, urgency, request_status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
+          userResult.insertId,
           fullName.trim(),
           age,
           gender,
@@ -844,6 +1000,7 @@ app.post('/api/register', rateLimit(5, 15 * 60 * 1000), requireDatabase, async (
     }
     await connection.commit();
     clearSessionCookie(res);
+    clearAdminSessionCookie(res);
     res.status(201).json({
       message: role === 'patient'
         ? 'Account and blood request created. Please log in.'
@@ -852,7 +1009,7 @@ app.post('/api/register', rateLimit(5, 15 * 60 * 1000), requireDatabase, async (
   } catch (error) {
     if (connection) await connection.rollback().catch(() => {});
     if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(409).json({ message: 'An account with this email already exists.' });
+      return res.status(409).json({ message: 'An account with this email or username already exists.' });
     }
     console.error('Account registration failed:', error.code || error.message);
     res.status(500).json({ message: 'Could not create the account.' });
@@ -862,27 +1019,32 @@ app.post('/api/register', rateLimit(5, 15 * 60 * 1000), requireDatabase, async (
 });
 
 app.post('/api/login', rateLimit(10, 15 * 60 * 1000), requireDatabase, async (req, res) => {
-  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const identifier = typeof req.body?.username === 'string' ? req.body.username.trim().toLowerCase() : '';
   const password = req.body?.password;
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 150 ||
+  if (!identifier || identifier.length > 150 ||
       typeof password !== 'string' || !password || password.length > 128) {
-    return res.status(400).json({ message: 'Enter a valid email address and password.' });
+    return res.status(400).json({ message: 'Enter your username and password.' });
   }
 
   try {
     const [users] = await db.execute(
-      'SELECT user_id, full_name, email, password_hash, role, city, state FROM users WHERE email = ? LIMIT 1',
-      [email]
+      `SELECT user_id, username, full_name, email, password_hash, role, city, state
+       FROM users
+       WHERE username = ? OR (username IS NULL AND email = ?)
+       LIMIT 1`,
+      [identifier, identifier]
     );
     const user = users[0];
     if (!user || !(await bcrypt.compare(password, user.password_hash))) {
-      return res.status(401).json({ message: 'Email or password is incorrect.' });
+      return res.status(401).json({ message: 'Username or password is incorrect.' });
     }
+    clearAdminSessionCookie(res);
     setSessionCookie(res, user.user_id);
     res.json({
       message: 'Login successful.',
       user: {
         user_id: user.user_id,
+        username: user.username,
         full_name: user.full_name,
         email: user.email,
         role: user.role,
@@ -896,12 +1058,128 @@ app.post('/api/login', rateLimit(10, 15 * 60 * 1000), requireDatabase, async (re
   }
 });
 
+app.post('/api/admin/login', rateLimit(8, 15 * 60 * 1000), requireDatabase, requireAdminConfigured, async (req, res) => {
+  const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
+  const password = req.body?.password;
+  if (!username || username.length > 80 || typeof password !== 'string' || !password || password.length > 128) {
+    return res.status(400).json({ message: 'Enter a valid admin username and password.' });
+  }
+
+  try {
+    const [admins] = await db.execute(
+      'SELECT admin_id, username, password_hash FROM admin_users WHERE admin_id = 1 AND username = ? LIMIT 1',
+      [username]
+    );
+    const admin = admins[0];
+    const passwordMatches = admin && (
+      await bcrypt.compare(password, admin.password_hash) ||
+      (password.trim() !== password && await bcrypt.compare(password.trim(), admin.password_hash))
+    );
+    if (!passwordMatches) {
+      return res.status(401).json({ message: 'Admin username or password is incorrect.' });
+    }
+    clearSessionCookie(res);
+    setAdminSessionCookie(res, admin.admin_id);
+    res.json({ message: 'Admin login successful.', admin: { username: admin.username } });
+  } catch (error) {
+    console.error('Admin login failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not log in as admin. Please try again.' });
+  }
+});
+
+app.get('/api/admin/session', requireDatabase, requireAdminConfigured, requireAdmin, (req, res) => {
+  res.json({ admin: { username: req.admin.username } });
+});
+
+app.post('/api/admin/logout', (req, res) => {
+  clearAdminSessionCookie(res);
+  res.json({ message: 'Admin logged out successfully.' });
+});
+
+app.get('/api/admin/dashboard', requireDatabase, requireAdminConfigured, requireAdmin, async (req, res) => {
+  try {
+    const [[countRows], [donors], [patients], [patientRequests], [bloodRequests]] = await Promise.all([
+      db.execute(
+        `SELECT
+           (SELECT COUNT(*) FROM users WHERE role IN ('donor', 'patient')) AS total_registrations,
+           (SELECT COUNT(*) FROM users WHERE role = 'donor') AS donor_count,
+           (SELECT COUNT(*) FROM users WHERE role = 'patient') AS patient_count,
+           ((SELECT COUNT(*) FROM patients) + (SELECT COUNT(*) FROM blood_requests)) AS patient_request_count`
+      ),
+      db.execute(
+        `SELECT u.user_id, u.username, u.full_name, u.email, u.age, u.gender, u.blood_group,
+                u.phone, u.city, u.state, u.place,
+                DATE_FORMAT(u.created_at, '%Y-%m-%dT%H:%i:%sZ') AS registered_at,
+                d.last_donation_date,
+                CASE WHEN d.available = 1
+                          AND d.public_contact_consent = 1
+                          AND d.availability_expires_at > UTC_TIMESTAMP()
+                     THEN 'Available' ELSE 'Not available' END AS availability_status
+         FROM users u
+         LEFT JOIN donors d ON d.user_id = u.user_id
+         WHERE u.role = 'donor'
+         ORDER BY u.created_at DESC, u.user_id DESC`
+      ),
+      db.execute(
+        `SELECT u.user_id, u.username, u.full_name, u.email, u.age, u.gender,
+                COALESCE(p.blood_group, u.blood_group) AS blood_group,
+                u.phone, COALESCE(NULLIF(p.city, ''), u.city) AS city, u.state,
+                COALESCE(NULLIF(p.area, ''), u.place) AS area, u.place,
+                DATE_FORMAT(u.created_at, '%Y-%m-%dT%H:%i:%sZ') AS registered_at,
+                p.patient_id AS request_id, p.hospital_name, p.units_required,
+                p.urgency, p.request_status,
+                DATE_FORMAT(p.request_date, '%Y-%m-%dT%H:%i:%sZ') AS request_date
+         FROM users u
+         LEFT JOIN patients p ON p.user_id = u.user_id
+         WHERE u.role = 'patient'
+         ORDER BY u.created_at DESC, u.user_id DESC`
+      ),
+      db.execute(
+        `SELECT patient_id AS request_id, patient_name, age, gender, blood_group,
+                hospital_name, city, area, contact_number, units_required,
+                urgency, request_status,
+                DATE_FORMAT(request_date, '%Y-%m-%dT%H:%i:%sZ') AS request_date
+         FROM patients
+         ORDER BY request_date DESC, patient_id DESC`
+      ),
+      db.execute(
+        `SELECT CAST(request_id AS CHAR) AS request_id,
+                patient_reference AS patient_name, NULL AS age, NULL AS gender,
+                blood_group, hospital_details AS hospital_name, city,
+                district AS area, contact_phone AS contact_number, contact_name,
+                units AS units_required, urgency, status AS request_status,
+                DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS request_date,
+                DATE_FORMAT(needed_at, '%Y-%m-%dT%H:%i:%sZ') AS needed_at
+         FROM blood_requests
+         ORDER BY created_at DESC, request_id DESC`
+      )
+    ]);
+    const counts = countRows[0];
+    res.json({
+      counts: {
+        total_registrations: Number(counts.total_registrations),
+        donor_count: Number(counts.donor_count),
+        patient_count: Number(counts.patient_count),
+        patient_request_count: Number(counts.patient_request_count)
+      },
+      donors,
+      patients,
+      patient_requests: patientRequests,
+      blood_requests: bloodRequests,
+      refreshed_at: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Admin dashboard lookup failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not load registrations from MySQL.' });
+  }
+});
+
 app.get('/api/me', requireDatabase, async (req, res) => {
   const userId = getSessionUserId(req);
   if (!userId) return res.json({ user: null });
   try {
     const [users] = await db.execute(
-      'SELECT user_id, full_name, email, role, city, state FROM users WHERE user_id = ? LIMIT 1',
+      'SELECT user_id, username, full_name, email, role, city, state FROM users WHERE user_id = ? LIMIT 1',
       [userId]
     );
     if (!users.length) {
@@ -917,6 +1195,7 @@ app.get('/api/me', requireDatabase, async (req, res) => {
 
 app.post('/api/logout', (req, res) => {
   clearSessionCookie(res);
+  clearAdminSessionCookie(res);
   res.json({ message: 'Logged out successfully.' });
 });
 

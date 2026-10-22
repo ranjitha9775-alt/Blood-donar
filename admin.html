@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#c6283d">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Admin Dashboard — LifeDrop</title>
+  <style>
+    :root { color-scheme: light; --red: #c6283d; --red-dark: #a51f32; --ink: #20232b; --muted: #737985; --line: #e7e9ee; --canvas: #f6f7fa; }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; background: var(--canvas); color: var(--ink); font: 14px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    button, input { font: inherit; }
+    header { background: white; border-bottom: 1px solid var(--line); }
+    .nav, main { width: min(1180px, calc(100% - 36px)); margin: auto; }
+    .nav { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    a { color: inherit; text-decoration: none; }
+    .brand { font-size: 21px; font-weight: 850; letter-spacing: -.7px; }
+    .brand span { color: var(--red); }
+    main { padding: 34px 0 60px; }
+    h1 { margin: 0; font-size: clamp(27px, 4vw, 36px); letter-spacing: -.9px; }
+    h2 { margin: 0; font-size: 18px; }
+    .muted, .subheading { color: var(--muted); }
+    .subheading { margin: 5px 0 22px; }
+    .panel, .stat { background: white; border: 1px solid var(--line); border-radius: 15px; box-shadow: 0 8px 26px rgba(30,38,52,.04); }
+    .login-panel { max-width: 460px; margin: 35px auto; padding: 26px; }
+    .form { display: grid; gap: 14px; margin-top: 20px; }
+    .field { display: grid; gap: 6px; }
+    .password-control { display: flex; gap: 8px; }
+    .password-control input { flex: 1; }
+    .password-toggle { flex: 0 0 auto; padding: 0 11px; border: 1px solid #dfe2e8; border-radius: 9px; background: white; color: var(--ink); font-weight: 650; cursor: pointer; }
+    label { font-size: 12px; font-weight: 750; }
+    input { width: 100%; min-height: 44px; padding: 9px 12px; border: 1px solid #dfe2e8; border-radius: 9px; }
+    input:focus { outline: 3px solid rgba(198,40,61,.15); border-color: #d85d6d; }
+    .button { min-height: 40px; padding: 0 14px; border: 0; border-radius: 9px; background: var(--red); color: white; font-weight: 750; cursor: pointer; }
+    .button:hover { background: var(--red-dark); }
+    .button:disabled { opacity: .65; cursor: wait; }
+    .button-secondary { background: white; color: var(--ink); border: 1px solid var(--line); }
+    .button-secondary:hover { background: #f7f8fa; }
+    .message { min-height: 20px; margin: 0; color: var(--red-dark); font-size: 12px; }
+    .dashboard-bar { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 22px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 9px; }
+    .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 13px; margin-bottom: 24px; }
+    .stat { padding: 17px 19px; }
+    .stat span { display: block; color: var(--muted); font-size: 12px; }
+    .stat strong { display: block; margin-top: 4px; font-size: 27px; letter-spacing: -.5px; }
+    .data-panel { overflow: hidden; margin: 16px 0; }
+    .data-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; padding: 18px 19px 12px; }
+    .data-heading p { margin: 0; font-size: 12px; }
+    .data-tools { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; padding: 0 19px 15px; }
+    .filter-field { display: grid; flex: 1 1 170px; gap: 5px; max-width: 280px; }
+    .filter-field label { color: #555b66; font-size: 11px; }
+    .filter-field input, .filter-field select { width: 100%; min-height: 38px; padding: 7px 10px; border: 1px solid #dfe2e8; border-radius: 8px; background: white; color: var(--ink); }
+    .record-count { margin-left: auto; padding-bottom: 9px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .table-scroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+    th, td { padding: 11px 14px; border-top: 1px solid var(--line); vertical-align: top; }
+    th { color: #555b66; background: #fafbfc; white-space: nowrap; font-size: 11px; }
+    td { min-width: 100px; overflow-wrap: anywhere; }
+    td:first-child { font-weight: 700; }
+    .status-line { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
+    @media (max-width: 760px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .dashboard-bar { align-items: flex-start; flex-direction: column; } }
+    @media (max-width: 420px) { .stats { gap: 8px; } .stat { padding: 13px; } .stat strong { font-size: 23px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="nav">
+      <a class="brand" href="/">Life<span>Drop</span> Admin</a>
+      <a class="muted" href="/">Back to website</a>
+    </div>
+  </header>
+  <main>
+    <section class="panel login-panel" id="loginPanel" aria-labelledby="loginTitle">
+      <h1 id="loginTitle">Admin login</h1>
+      <p class="muted">Sign in with the separate admin credentials configured by the site owner.</p>
+      <form class="form" id="loginForm" autocomplete="off">
+        <div class="field"><label for="username">Admin username</label><input id="username" name="username" autocomplete="section-admin username" required maxlength="80" autocapitalize="none" spellcheck="false"></div>
+        <div class="field"><label for="password">Admin password</label><div class="password-control"><input id="password" name="password" type="password" autocomplete="section-admin current-password" required maxlength="128"><button class="password-toggle" id="togglePassword" type="button" aria-controls="password" aria-pressed="false">Show</button></div></div>
+        <p class="muted">Use the admin credentials from your project’s private `.env` file, not a donor or patient account.</p>
+        <p class="message" id="loginMessage" aria-live="polite"></p>
+        <button class="button" type="submit">Log in securely</button>
+      </form>
+    </section>
+    <section id="dashboard" hidden>
+      <div class="dashboard-bar">
+        <div><h1>Admin dashboard</h1><p class="subheading">Registered accounts and patient requests from the connected MySQL database.</p></div>
+        <div class="actions">
+          <button class="button button-secondary" id="refreshButton" type="button">Refresh now</button>
+          <button class="button button-secondary" id="logoutButton" type="button">Log out</button>
+        </div>
+      </div>
+      <p class="status-line" id="refreshStatus" aria-live="polite"></p>
+      <div class="stats" aria-label="Registration totals">
+        <article class="stat"><span>Total registrations</span><strong id="totalRegistrations">—</strong></article>
+        <article class="stat"><span>Donor accounts</span><strong id="donorCount">—</strong></article>
+        <article class="stat"><span>Patient accounts</span><strong id="patientCount">—</strong></article>
+        <article class="stat"><span>Patient requests</span><strong id="requestCount">—</strong></article>
+      </div>
+      <section class="panel data-panel" id="donorManagement" aria-labelledby="donorManagementTitle">
+        <div class="data-heading"><h2 id="donorManagementTitle">Donor Management</h2><p class="muted">Registered donor profiles and current opt-in status</p></div>
+        <div class="data-tools">
+          <div class="filter-field"><label for="donorSearch">Search donors</label><input id="donorSearch" type="search" placeholder="Name, username, phone, city…"></div>
+          <div class="filter-field"><label for="donorBloodFilter">Blood group</label><select id="donorBloodFilter"><option value="">All blood groups</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
+          <div class="filter-field"><label for="donorAvailabilityFilter">Availability</label><select id="donorAvailabilityFilter"><option value="">All donors</option><option>Available</option><option>Not available</option></select></div>
+          <span class="record-count" id="donorResultCount" aria-live="polite"></span>
+        </div>
+        <div class="table-scroll"><table><thead><tr><th>Name</th><th>Username</th><th>Phone</th><th>Blood group</th><th>City</th><th>Area</th><th>Availability</th><th>Email</th><th>Last donation</th><th>Registered</th></tr></thead><tbody id="donorRows"></tbody></table></div>
+      </section>
+      <section class="panel data-panel" id="patientManagement" aria-labelledby="patientManagementTitle">
+        <div class="data-heading"><h2 id="patientManagementTitle">Patient Management</h2><p class="muted">Patient accounts and their blood request status</p></div>
+        <div class="data-tools">
+          <div class="filter-field"><label for="patientSearch">Search patients</label><input id="patientSearch" type="search" placeholder="Name, username, phone, city…"></div>
+          <div class="filter-field"><label for="patientBloodFilter">Required blood group</label><select id="patientBloodFilter"><option value="">All blood groups</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
+          <div class="filter-field"><label for="patientUrgencyFilter">Urgency</label><select id="patientUrgencyFilter"><option value="">All urgency levels</option><option>Urgent</option><option>Within 24 hours</option><option>Planned</option></select></div>
+          <div class="filter-field"><label for="patientStatusFilter">Request status</label><select id="patientStatusFilter"><option value="">All statuses</option><option>Pending</option><option>Pending Verification</option><option>Under Review</option><option>Fulfilled</option><option>Cancelled</option></select></div>
+          <span class="record-count" id="patientResultCount" aria-live="polite"></span>
+        </div>
+        <div class="table-scroll"><table><thead><tr><th>Name</th><th>Username</th><th>Phone</th><th>Required blood group</th><th>City</th><th>Area</th><th>Urgency</th><th>Request status</th><th>Email</th><th>Hospital / units</th><th>Registered</th></tr></thead><tbody id="patientRows"></tbody></table></div>
+        <div class="data-heading"><h2>All patient and blood requests</h2><p class="muted">Includes legacy requests and later website requests</p></div>
+        <div class="table-scroll"><table><thead><tr><th>Request type</th><th>Patient / contact</th><th>Age / gender</th><th>Blood group</th><th>Hospital</th><th>City / area</th><th>Contact phone</th><th>Units</th><th>Urgency / status</th><th>Requested</th><th>Needed by</th></tr></thead><tbody id="requestRows"></tbody></table></div>
+      </section>
+    </section>
+  </main>
+  <script src="/admin.js" defer></script>
+</body>
+</html>

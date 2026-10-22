@@ -229,7 +229,7 @@
         <span>Life<span>Drop</span></span>
       </a>
       <nav class="nav-links" id="navLinks" aria-label="Main navigation">
-        <a href="#home">Home</a><a href="#availability">Find blood</a><a href="#stocks">Blood stocks</a><a href="#camps">Donation camps</a><a href="#about">About</a><a href="/login">Login</a>
+        <a href="#home">Home</a><a href="#availability">Find blood</a><a href="#stocks">Blood stocks</a><a href="#camps">Donation camps</a><a href="#about">About</a><a href="/login">Login</a><a href="/admin">Admin Dashboard</a>
       </nav>
       <div class="nav-actions">
         <button class="btn btn-outline btn-small" type="button" data-open="requestDialog">Emergency request</button>
@@ -364,8 +364,9 @@
         <div class="form-grid">
           <div class="field span-2"><label for="registrationRole">I am registering as</label><select id="registrationRole" name="role" required><option value="">Select Donor or Patient</option><option value="donor">Donor</option><option value="patient">Patient</option></select></div>
           <div class="field span-2"><label for="registrationName">Full name</label><input id="registrationName" name="name" autocomplete="name" required maxlength="100"></div>
+          <div class="field"><label for="registrationUsername">Username</label><input id="registrationUsername" name="username" autocomplete="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9._-]{3,32}" title="Use 3–32 letters, numbers, dots, underscores, or hyphens."></div>
           <div class="field"><label for="registrationEmail">Email address</label><input id="registrationEmail" name="email" type="email" autocomplete="email" required maxlength="150"></div>
-          <div class="field"><label for="registrationPassword">Password</label><input id="registrationPassword" name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="128"></div>
+          <div class="field"><label for="registrationPassword">Password</label><input id="registrationPassword" name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="128"><span class="form-hint">Stored securely as a one-way password hash.</span></div>
           <div class="field"><label for="registrationAge">Age</label><input id="registrationAge" name="age" type="number" min="1" max="120" step="1" inputmode="numeric" required></div>
           <div class="field"><label for="registrationGender">Gender</label><select id="registrationGender" name="gender" required><option value="">Select gender</option><option>Female</option><option>Male</option><option>Non-binary</option><option>Prefer not to say</option></select></div>
           <div class="field"><label for="registrationBlood">Blood group</label><select id="registrationBlood" name="blood" required><option value="">Select group</option><option>A+</option><option>A−</option><option>B+</option><option>B−</option><option>AB+</option><option>AB−</option><option>O+</option><option>O−</option></select></div>

@@ -54,7 +54,7 @@
     loginPanel.hidden = true;
     availabilityPanel.hidden = false;
     document.getElementById("profileName").textContent = user.full_name;
-    document.getElementById("profileRole").textContent = `${user.role} account · ${user.email}`;
+    document.getElementById("profileRole").textContent = `${user.role} account · ${user.username || user.email}`;
     const donorAvailabilityForm = document.getElementById("donorAvailabilityForm");
     const form = document.getElementById("availabilityForm");
     form.elements.city.value = user.city || "";
@@ -96,7 +96,7 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          email: form.elements.email.value.trim(),
+          username: form.elements.username.value.trim(),
           password: form.elements.password.value
         })
       });

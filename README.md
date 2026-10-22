@@ -12,7 +12,14 @@ This link works only when the LifeDrop server is running on your computer. It is
 
 1. Install Node.js and MySQL.
 2. Create the database named in `DB_NAME` (defaults to `lifedrop`).
-3. Configure the database connection in a local `.env` file:
+3. If you do not already have a `.env` file, create one from the example in PowerShell:
+
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+   If `.env` already exists, keep it and edit it without overwriting its database settings.
+4. Configure the database connection and private admin credentials in `.env`:
 
    ```env
    PORT=3000
@@ -21,22 +28,25 @@ This link works only when the LifeDrop server is running on your computer. It is
    DB_USER=your_mysql_user
    DB_PASSWORD=your_mysql_password
    DB_NAME=lifedrop
+   ADMIN_USERNAME=choose_a_private_admin_username
+   ADMIN_PASSWORD=use_a_unique_password_of_at_least_12_characters
    ```
 
-4. Configure a stable, random `SESSION_SECRET` in `.env` (at least 32 characters). For example, generate one with `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` and copy it into `.env`.
-5. Run `npm install`, then `npm start`.
-6. Open `http://localhost:3000`. `localhost` is only your own computer; this is not the public deployed website URL.
+5. Set a private admin username and a unique password of at least 12 characters in `.env`. These are separate from donor/patient accounts; there is no public admin registration form. The server creates or updates the single admin account from these environment variables on startup and stores only a bcrypt password hash in MySQL. Do not use the example text as a real password or commit `.env`.
+6. Configure a stable, random `SESSION_SECRET` in `.env` (at least 32 characters). For example, generate one with `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` and copy it into `.env`.
+7. Run `npm install`, then `npm start`.
+8. Open `http://localhost:3000`. Visit `http://localhost:3000/admin` and sign in with `ADMIN_USERNAME` and `ADMIN_PASSWORD`. `localhost` is only your own computer; this is not the public deployed website URL.
 
-On startup, the server creates the `camp_registrations`, `users`, and `blood_requests` tables, and creates or migrates the `donors` table, including a state field for expanding searches beyond Karnataka. The database user needs permission to create/alter tables and create indexes. The local health endpoint is `http://localhost:3000/api/health`.
+On startup, the server creates the `camp_registrations`, `users`, `admin_users`, and `blood_requests` tables, and creates or migrates the `donors` and `patients` tables. It adds a unique username column to `users` and a nullable user link to `patients`; existing accounts without a username can continue to sign in using their email, while new registrations use usernames. Older patient request rows remain visible separately in the dashboard. The database user needs permission to create/alter tables and create indexes. The local health endpoint is `http://localhost:3000/api/health`.
 
 ## Deploy online with Railway
 
 LifeDrop serves its frontend and API from one Express service. The frontend uses relative API URLs, so it does not need a separate API base URL or CORS configuration when deployed this way.
 
-1. Confirm that the GitHub repository `ranjitha9775-alt/Blood-donar` contains the project files (including `server.js`, `package.json`, `package-lock.json`, and `index.html`). Commit and push updates from your project folder:
+1. Confirm that the GitHub repository `ranjitha9775-alt/Blood-donar` contains the project files (including `server.js`, `package.json`, `package-lock.json`, `admin.html`, `admin.js`, and `index.html`). Commit and push updates from your project folder:
 
    ```powershell
-   git add .gitignore .env.example README.md package.json package-lock.json server.js app.js login.js login.html index.html assets
+   git add .gitignore .env.example README.md package.json package-lock.json server.js app.js login.js login.html admin.html admin.js index.html assets
    git commit -m "Prepare LifeDrop for deployment"
    git push origin main
    ```
@@ -50,6 +60,8 @@ LifeDrop serves its frontend and API from one Express service. The frontend uses
    ```text
    NODE_ENV=production
    SESSION_SECRET=<generate a unique random secret locally>
+   ADMIN_USERNAME=<choose a private admin username>
+   ADMIN_PASSWORD=<set a unique password of at least 12 characters>
    DB_HOST=${{MySQL.MYSQLHOST}}
    DB_PORT=${{MySQL.MYSQLPORT}}
    DB_USER=${{MySQL.MYSQLUSER}}
@@ -80,9 +92,15 @@ For a data migration, provision a fresh/empty hosted database, make and verify a
 
 The app creates its tables on startup. The MySQL user needs permission to create and alter tables and indexes. A successful health check tests database connectivity and initialization, not the completeness of any manual data migration.
 
+## Admin dashboard
+
+- The private dashboard is at `/admin`. It uses its own `admin_users` MySQL table, credentials, rate-limited login endpoint, and HTTP-only admin session cookie; donor/patient login cannot authenticate to it. Dashboard APIs require the separate admin session on the server, so hiding the page in the browser is not the security boundary.
+- Only the admin dashboard shows private account information. Its separate Donor Management and Patient Management sections load real registrations from the existing `users`, `donors`, `patients`, and `blood_requests` tables. Each section has a total and live search/filter controls; donor availability is derived from current consented listings, and patient fields include required blood group, location, urgency, and request status. The patient-request total includes registration requests in `patients` and later requests in `blood_requests`; legacy request rows remain visible under Patient Management. New registrations appear on the next 15-second refresh, with a manual refresh option.
+- To change the admin username or password, update `ADMIN_USERNAME` / `ADMIN_PASSWORD` in the private environment configuration and restart the server. The app re-hashes and applies those credentials on startup. If either value is missing or invalid, admin login is disabled; donor and patient registration remain available. Never use a shared or reused password.
+
 ## Accounts and live donor availability
 
-- Donors and patients create accounts with an email address and password. Passwords are hashed before storage. Donor account/profile creation is transactional across `users` and `donors`. Patient registration also collects hospital, units, and urgency, then transactionally saves the account in `users` and its initial `Pending` blood request in `patients`. After registration, the home page stays open and users may select Login when they are ready to sign in. Registration clears any existing session, so the new account is not logged in automatically.
+- Donors and patients create accounts with a unique username, email address, and password. Usernames are unique and case-insensitive; use 3–32 letters, numbers, dots, underscores, or hyphens. Passwords are bcrypt-hashed before storage and are never included in dashboard responses. Donor account/profile creation is transactional across `users` and `donors`. Patient registration also collects hospital, units, and urgency, then transactionally saves the account in `users` and its initial `Pending` blood request in `patients`. New users sign in with username and password; accounts created before usernames were introduced can continue signing in with their email and password. After registration, the home page stays open and users may select Login when they are ready to sign in. Registration clears any existing session, so the new account is not logged in automatically.
 - To verify patient blood requests in MySQL Workbench, select the `lifedrop` schema and run:
 
   ```sql

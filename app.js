@@ -390,6 +390,7 @@
             body: JSON.stringify({
               full_name: String(data.get("name")).trim(),
               email: String(data.get("email")).trim(),
+              username: String(data.get("username")).trim(),
               password: data.get("password"),
               role,
               age,
