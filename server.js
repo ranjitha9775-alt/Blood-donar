@@ -2637,6 +2637,9 @@ app.get('/api/donors/search', requireDatabase, requireSession, rateLimit(30, 60 
 });
 
 app.get('/api/availability', requireDatabase, requireSession, rateLimit(30, 60 * 1000), async (req, res) => {
+  if (req.user.role !== 'patient') {
+    return res.status(403).json({ message: 'Patient accounts can search for available donors.' });
+  }
   const city = typeof req.query.city === 'string' ? req.query.city.trim() : '';
   const state = typeof req.query.state === 'string' ? req.query.state.trim() : '';
   if (req.query.blood_group !== undefined && typeof req.query.blood_group !== 'string') {
@@ -2654,26 +2657,29 @@ app.get('/api/availability', requireDatabase, requireSession, rateLimit(30, 60 *
 
   try {
     const filters = [
-      'available = 1',
-      'public_contact_consent = 1',
-      'last_confirmed_at IS NOT NULL',
-      "COALESCE(availability_mode, 'general') = 'general'",
-      'availability_expires_at > UTC_TIMESTAMP()',
-      'LOWER(city) = LOWER(?)',
-      'LOWER(state) = LOWER(?)'
+      'd.available = 1',
+      'd.public_contact_consent = 1',
+      'd.public_identity_consent = 1',
+      'd.last_confirmed_at IS NOT NULL',
+      "COALESCE(d.availability_mode, 'general') = 'general'",
+      'd.availability_expires_at > UTC_TIMESTAMP()',
+      'LOWER(d.city) = LOWER(?)',
+      'LOWER(d.state) = LOWER(?)'
     ];
     const values = [city, state];
     if (bloodGroup) {
-      filters.push('blood_group = ?');
+      filters.push('d.blood_group = ?');
       values.push(bloodGroup);
     }
     const [donors] = await db.execute(
-      `SELECT 'Available donor' AS name, blood_group, city, state,
-              DATE_FORMAT(last_confirmed_at, '%Y-%m-%dT%H:%i:%sZ') AS last_confirmed_at,
-              DATE_FORMAT(availability_expires_at, '%Y-%m-%dT%H:%i:%sZ') AS available_until
-       FROM donors
+      `SELECT u.full_name AS name, d.blood_group, d.city, d.state,
+              COALESCE(NULLIF(d.place, ''), NULLIF(u.place, '')) AS place,
+              DATE_FORMAT(d.last_confirmed_at, '%Y-%m-%dT%H:%i:%sZ') AS last_confirmed_at,
+              DATE_FORMAT(d.availability_expires_at, '%Y-%m-%dT%H:%i:%sZ') AS available_until
+       FROM donors d
+       JOIN users u ON u.user_id = d.user_id AND u.role = 'donor'
        WHERE ${filters.join(' AND ')}
-       ORDER BY availability_expires_at DESC
+       ORDER BY d.availability_expires_at DESC
        LIMIT 25`,
       values
     );

@@ -63,13 +63,22 @@
     document.getElementById("profileRole").textContent = `${user.role} account · ${user.username || user.email}`;
     const donorAvailabilityForm = document.getElementById("donorAvailabilityForm");
     const form = document.getElementById("availabilityForm");
+    const isDonor = user.role === "donor";
+    document.getElementById("availabilityTitle").textContent =
+      isDonor ? "Manage donor availability" : "Available donors near your location";
+    document.getElementById("availabilityHelp").textContent = isDonor
+      ? "Manage your current availability here, or open the Donor Portal to save availability dates and manage your full donor profile."
+      : "We automatically check currently available registered donors matching your city, state, and blood-group filter. Results show registered names and city/area only for donors who opted in. Phone numbers are shared only after a donor accepts a specific request and separately consents.";
+    form.hidden = isDonor;
+    document.getElementById("searchMessage").hidden = isDonor;
+    document.getElementById("searchResults").hidden = isDonor;
     form.elements.city.value = user.city || "";
     form.elements.state.value = user.state || "";
-    donorAvailabilityForm.hidden = user.role !== "donor";
-    if (user.role === "donor") loadDonorAvailability();
-    if (user.city && user.state) {
+    donorAvailabilityForm.hidden = !isDonor;
+    if (isDonor) loadDonorAvailability();
+    if (!isDonor && user.city && user.state) {
       searchAvailableDonors();
-    } else {
+    } else if (!isDonor) {
       searchMessage.textContent = "Add a city and state to your profile location to search for nearby donors.";
       searchResults.textContent = "Enter a city and state to search.";
     }
@@ -153,9 +162,9 @@
           const availableUntil = new Date(donor.available_until);
           return `<article class="result-card">
             <h3>${escapeHtml(donor.name)} · ${escapeHtml(donor.blood_group)}</h3>
-            <p>${escapeHtml(donor.city)}, ${escapeHtml(donor.state)}</p>
+            <p>${donor.place ? `${escapeHtml(donor.place)}, ` : ""}${escapeHtml(donor.city)}, ${escapeHtml(donor.state)}</p>
             <p>Available until ${escapeHtml(availableUntil.toLocaleString())}</p>
-            <p>Last confirmed ${escapeHtml(new Date(donor.last_confirmed_at).toLocaleString())}. Contact information is not shown in public search.</p>
+            <p>Last confirmed ${escapeHtml(new Date(donor.last_confirmed_at).toLocaleString())}. Phone numbers are shared only after this donor accepts a specific request and consents to contact sharing.</p>
           </article>`;
         }).join("");
     } catch (error) {
