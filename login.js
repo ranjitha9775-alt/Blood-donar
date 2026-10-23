@@ -139,11 +139,12 @@
         `<p class="help">${data.donors.length} available donor${data.donors.length === 1 ? "" : "s"} · Checked ${escapeHtml(checkedAt.toLocaleTimeString())}</p>` +
         data.donors.map(donor => {
           const availableUntil = new Date(donor.available_until);
+          const phoneHref = donor.phone.replace(/[^\d+]/g, "");
           return `<article class="result-card">
             <h3>${escapeHtml(donor.name)} · ${escapeHtml(donor.blood_group)}</h3>
             <p>${escapeHtml(donor.city)}, ${escapeHtml(donor.state)}</p>
             <p>Available until ${escapeHtml(availableUntil.toLocaleString())}</p>
-            <p>Phone: <a href="tel:${escapeHtml(donor.phone)}">${escapeHtml(donor.phone)}</a></p>
+            <p>Contact the donor directly (no SMS notification is sent): <a href="tel:${escapeHtml(phoneHref)}">${escapeHtml(donor.phone)}</a></p>
           </article>`;
         }).join("");
     } catch (error) {
