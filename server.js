@@ -317,6 +317,13 @@ async function requireSession(req, res, next) {
   }
 }
 
+function requireDashboardSession(req, res, next) {
+  if (!getSessionUserId(req)) {
+    return res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
+  }
+  return requireSession(req, res, next);
+}
+
 function serveAccountDashboard(role, filename) {
   return (req, res) => {
     res.set('Cache-Control', 'no-store');
@@ -332,10 +339,10 @@ function serveAccountDashboard(role, filename) {
   };
 }
 
-app.get('/donar-dashboard.html', requireDatabase, requireSession, serveAccountDashboard('donor', 'donar-dashboard.html'));
-app.get('/donor-dashboard.html', requireDatabase, requireSession, serveAccountDashboard('donor', 'donar-dashboard.html'));
-app.get('/patient-dashboard.html', requireDatabase, requireSession, serveAccountDashboard('patient', 'patient-dashboard.html'));
-app.get('/blood-bank-review.html', requireDatabase, requireSession, (req, res) => {
+app.get('/donar-dashboard.html', requireDatabase, requireDashboardSession, serveAccountDashboard('donor', 'donar-dashboard.html'));
+app.get('/donor-dashboard.html', requireDatabase, requireDashboardSession, serveAccountDashboard('donor', 'donar-dashboard.html'));
+app.get('/patient-dashboard.html', requireDatabase, requireDashboardSession, serveAccountDashboard('patient', 'patient-dashboard.html'));
+app.get('/blood-bank-review.html', requireDatabase, requireDashboardSession, (req, res) => {
   if (req.user.role !== 'blood_bank') return res.sendStatus(403);
   res.set('Cache-Control', 'no-store');
   res.sendFile(path.join(__dirname, 'blood-bank-review.html'));

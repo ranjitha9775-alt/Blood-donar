@@ -8,6 +8,8 @@ LifeDrop is a student project demo. Donor availability, account profiles, donati
 
 This link works only when the LifeDrop server is running on your computer. It is not a public website URL; others cannot open your computer's `localhost` link. A public URL requires completing the hosting deployment below.
 
+The home page's **Choose your portal** section links to the separate [Donor Portal](http://localhost:3000/donor-dashboard.html), [Patient Portal](http://localhost:3000/patient-dashboard.html), and [Admin Portal](http://localhost:3000/admin). Donor and patient pages send signed-out visitors to login and return them to the selected portal after successful login. The Admin Portal uses its separate admin sign-in.
+
 ## Run the application
 
 1. Install Node.js and MySQL.
