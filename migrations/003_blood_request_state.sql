@@ -1,0 +1,2 @@
+ALTER TABLE blood_requests
+  ADD COLUMN state VARCHAR(80) NOT NULL DEFAULT '' AFTER city;

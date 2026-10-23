@@ -62,7 +62,7 @@
   </style>
 </head>
 <body>
-  <div class="top-note">Live donor contact details are shown only to logged-in users and only with explicit donor consent.</div>
+  <div class="top-note">Search results do not reveal donor contact details. Contact is shared only with explicit consent for an individual request.</div>
   <header>
     <div class="nav">
       <a class="brand" href="/">Life<span>Drop</span></a>
@@ -90,11 +90,12 @@
         <button class="btn btn-outline" id="logoutButton" type="button">Log out</button>
       </div>
       <h2 id="availabilityTitle">Available donors near your location</h2>
-      <p class="help">We automatically check for currently available donors in your registered city and state after login and refresh results every 15 seconds while this page is open. You can change the location or filter by blood group. Results include donor details only when they confirmed availability and consented to public search; listings expire after 24 hours. A phone number lets you contact the donor directly; entering a valid phone number does not send an SMS. Emergency request notifications are in-app only.</p>
+      <p class="help">We automatically check for currently available donors in your registered city and state after login and refresh results every 15 seconds while this page is open. You can change the location or filter by blood group. Results show privacy-safe donor labels only when the donor has confirmed availability and opted into search; listings expire after their selected confirmation duration. Contact details are shared only after the donor separately consents for an individual emergency request. Emergency request notifications are in-app only.</p>
       <form class="donor-opt-in" id="donorAvailabilityForm" hidden>
         <h3>Manage your donor availability</h3>
-        <p>Opt in to appear in donor searches for 24 hours. You can turn this off at any time.</p>
-        <label class="consent-label"><input id="donorAvailabilityConsent" name="consent" type="checkbox"><span>I am currently available to be contacted, and I explicitly consent to showing my name, blood group, city/state, and phone number to people searching for donors during the next 24 hours. My exact area is not shown.</span></label>
+        <p>Opt in to appear as a privacy-safe donor match while your confirmation is current. You can turn this off at any time.</p>
+        <label class="consent-label"><input id="donorAvailabilityConsent" name="consent" type="checkbox"><span>I am currently available and explicitly consent to showing my blood group and approximate city/state in donor search. My name, phone, email, and exact area are not shown in search results.</span></label>
+        <div class="field"><label for="loginAvailabilityExpiry">Confirmation duration</label><select id="loginAvailabilityExpiry"><option value="4">4 hours</option><option value="12">12 hours</option><option value="24" selected>24 hours</option></select></div>
         <div class="availability-actions">
           <button class="btn btn-primary" type="submit">Update availability</button>
           <p class="availability-status" id="donorAvailabilityMessage" aria-live="polite"></p>

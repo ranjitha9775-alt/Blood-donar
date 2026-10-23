@@ -23,6 +23,18 @@
     .response { padding: 15px 0; border-top: 1px solid var(--line); }
     .response:first-child { border-top: 0; }
     .safety { padding: 12px 14px; border-left: 3px solid #e1aa29; background: #fff8e6; color: #5c4a1d; font-size: 13px; }
+    .search-grid, .request-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 16px; }
+    .field { display: grid; gap: 6px; }
+    .field label { font-size: 13px; font-weight: 700; }
+    input, select { min-height: 42px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink); font: inherit; }
+    .search-result { padding: 15px 0; border-top: 1px solid var(--line); }
+    .search-result:first-child { border-top: 0; }
+    .message { min-height: 20px; color: var(--muted); }
+    .links { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+    .links a { color: var(--red); text-decoration: underline; }
+    .consent { display: flex; align-items: flex-start; gap: 9px; margin: 14px 0; font-size: 13px; }
+    .consent input { flex: 0 0 18px; min-height: 18px; width: 18px; margin-top: 2px; accent-color: var(--red); }
+    button:disabled { opacity: .65; cursor: wait; }
     button { min-height: 42px; padding: 0 14px; border: 0; border-radius: 9px; background: var(--red); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
     [hidden] { display: none !important; }
     @media (max-width: 520px) { .card { padding: 17px; } }
@@ -38,6 +50,49 @@
   <main>
     <h1>Patient dashboard</h1>
     <p class="muted" id="welcome">Checking your login…</p>
+    <section class="card" aria-labelledby="donorSearchTitle">
+      <h2 id="donorSearchTitle">Find blood · Live donor search</h2>
+      <p class="muted">Searches opted-in, currently confirmed donor records in LifeDrop. Location is approximate; donors do not have GPS coordinates in this database. No donor phone, email, or exact address is shown.</p>
+      <form id="patientDonorSearchForm">
+        <div class="search-grid">
+          <div class="field"><label for="searchState">State</label><input id="searchState" value="Karnataka" readonly></div>
+          <div class="field"><label for="searchCity">City</label><input id="searchCity" value="Mysuru" required maxlength="80"></div>
+          <div class="field"><label for="searchBloodGroup">Blood group needed</label><select id="searchBloodGroup" required><option value="">Choose group</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
+          <div class="field"><label for="searchRadius">Search area</label><select id="searchRadius"><option value="5">5 km</option><option value="10">10 km</option><option value="25" selected>25 km</option><option value="50">50 km</option><option value="wider">Wider search (Karnataka)</option></select></div>
+          <div class="field"><label for="searchUnits">Units required</label><input id="searchUnits" type="number" min="1" max="20" step="1" value="1" required></div>
+          <label class="consent"><input id="searchEmergency" type="checkbox"><span>Prioritize for an emergency</span></label>
+        </div>
+        <p class="muted">Donor coordinates are not stored, so the 5/10/25/50 km choices cannot filter by actual distance and instead return approximate city-level matches. Wider search checks opted-in donors across Karnataka. Exact blood-group matches are not medical compatibility advice; the treating blood bank must confirm compatibility.</p>
+        <button id="searchDonorsButton" type="submit">Search confirmed donors</button>
+      </form>
+      <p class="message" id="donorSearchMessage" aria-live="polite">Choose a blood group to search.</p>
+      <div id="donorSearchResults" aria-live="polite"></div>
+      <div class="links">
+        <a href="/#stocks">Search reported blood-bank stock in LifeDrop</a>
+        <a href="https://eraktkosh.mohfw.gov.in/eraktkoshPortal/" target="_blank" rel="noopener noreferrer">Open official e-RaktKosh portal</a>
+      </div>
+      <p class="muted">Blood-bank stock is separate from individual donor availability. Verify stock and contact details directly with the blood bank.</p>
+    </section>
+    <section class="card" id="patientRequestCard" aria-labelledby="patientRequestTitle" hidden>
+      <h2 id="patientRequestTitle">Send emergency request</h2>
+      <p class="muted">Urgent requests create in-app notifications for matching donors who explicitly opted into emergency matching. No SMS or email is sent.</p>
+      <form id="patientEmergencyRequestForm">
+        <input id="requestBlood" name="blood" type="hidden">
+        <div class="request-grid">
+          <div class="field"><label for="requestHospitalName">Hospital / blood bank name</label><input id="requestHospitalName" name="hospital_name" required maxlength="150"></div>
+          <div class="field"><label for="requestHospitalAddress">Hospital address (optional)</label><input id="requestHospitalAddress" name="hospital_address" maxlength="180"></div>
+          <div class="field"><label for="requestCity">City</label><input id="requestCity" name="city" required maxlength="80" value="Mysuru"></div>
+          <div class="field"><label for="requestDistrict">District / area</label><input id="requestDistrict" name="district" required maxlength="80" value="Mysuru"></div>
+          <div class="field"><label for="requestUnits">Units required</label><input id="requestUnits" name="units" type="number" min="1" max="20" step="1" value="1" required></div>
+          <div class="field"><label for="requestUrgency">Urgency</label><select id="requestUrgency" name="urgency" required><option>Urgent</option><option>Within 24 hours</option><option>Planned</option></select></div>
+          <div class="field"><label for="requestNeededAt">Needed by</label><input id="requestNeededAt" name="needed_at" type="datetime-local" required></div>
+        </div>
+        <label class="consent"><input id="requestMatchDonors" name="match_donors" type="checkbox" checked><span>Notify matching donors in the app if this is an urgent request.</span></label>
+        <label class="consent"><input name="consent" type="checkbox" required><span>I consent to securely storing and using these details to process this blood request. The hospital address and my contact details are not shared with matched donors.</span></label>
+        <button id="sendEmergencyRequestButton" type="submit">Save request and notify matching donors</button>
+        <p class="message" id="patientRequestMessage" aria-live="polite"></p>
+      </form>
+    </section>
     <section class="card" id="patientResponsesCard" aria-labelledby="patientResponsesTitle" hidden>
       <h2 id="patientResponsesTitle">Responses to your urgent requests</h2>
       <p class="muted">Donor responses and availability are self-reported. A response does not guarantee attendance or a donation.</p>

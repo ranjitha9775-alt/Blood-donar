@@ -147,12 +147,11 @@
         `<p class="help">${data.donors.length} available donor${data.donors.length === 1 ? "" : "s"} · Checked ${escapeHtml(checkedLabel)} · Updates every 15 seconds while this page is open.</p>` +
         data.donors.map(donor => {
           const availableUntil = new Date(donor.available_until);
-          const phoneHref = donor.phone.replace(/[^\d+]/g, "");
           return `<article class="result-card">
             <h3>${escapeHtml(donor.name)} · ${escapeHtml(donor.blood_group)}</h3>
             <p>${escapeHtml(donor.city)}, ${escapeHtml(donor.state)}</p>
             <p>Available until ${escapeHtml(availableUntil.toLocaleString())}</p>
-            <p>Contact the donor directly (no SMS notification is sent): <a href="tel:${escapeHtml(phoneHref)}">${escapeHtml(donor.phone)}</a></p>
+            <p>Last confirmed ${escapeHtml(new Date(donor.last_confirmed_at).toLocaleString())}. Contact information is not shown in public search.</p>
           </article>`;
         }).join("");
     } catch (error) {
@@ -186,7 +185,8 @@
             ? "available"
             : "not_available",
           public_contact_consent: document.getElementById("donorAvailabilityConsent").checked,
-          emergency_response_consent: emergencyResponseConsent
+          emergency_response_consent: emergencyResponseConsent,
+          expires_in_hours: Number(document.getElementById("loginAvailabilityExpiry").value)
         })
       });
       message.textContent = data.is_available

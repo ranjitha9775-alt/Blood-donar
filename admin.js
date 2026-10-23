@@ -73,6 +73,9 @@
         (!availability || donor.availability_status === availability);
     });
     document.getElementById("donorResultCount").textContent = `Showing ${filtered.length} of ${donors.length}`;
+    const emptyMessage = donors.length === 0
+      ? "No donor accounts are registered."
+      : "No donors match the selected filters.";
     addRow(document.getElementById("donorRows"), filtered.map(donor => [
       donor.full_name,
       donor.username || "Legacy account",
@@ -81,12 +84,12 @@
       donor.city,
       donor.place,
       donor.availability_status,
-      donor.availability_status === "Available" ? formatDate(donor.available_until) : "—",
+      formatDate(donor.available_until),
       formatDate(donor.last_confirmed_at),
       donor.email,
       donor.last_donation_date,
       formatDate(donor.registered_at)
-    ]), "No donor accounts are registered.");
+    ]), emptyMessage);
   }
 
   function renderPatients() {
@@ -179,6 +182,11 @@
         loginMessage.textContent = "Your admin session expired. Please log in again.";
       } else {
         refreshStatus.textContent = error.message;
+        if (!dashboardData) {
+          addRow(document.getElementById("donorRows"), [], "Could not load donor records.");
+          addRow(document.getElementById("patientRows"), [], "Could not load patient records.");
+          addRow(document.getElementById("requestRows"), [], "Could not load patient requests.");
+        }
       }
     } finally {
       isRefreshing = false;

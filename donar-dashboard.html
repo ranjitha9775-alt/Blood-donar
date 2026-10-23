@@ -62,7 +62,7 @@
 
     <section class="card" id="availabilityCard" aria-labelledby="availabilityTitle" hidden>
       <h2 id="availabilityTitle">Donor Availability Confirmation</h2>
-      <p class="muted">Your confirmation lasts 24 hours. It does not promise that you can donate or accept any particular request.</p>
+      <p class="muted">Confirm for up to 24 hours. Unknown or expired confirmations are shown as Unconfirmed and are not matched.</p>
       <div class="status-panel">
         <div><strong>Current status</strong><br><span class="status-label" id="availabilityStatus">Loading…</span></div>
         <div><strong>Last confirmed</strong><br><time class="muted" id="lastConfirmedAt">Not confirmed yet</time></div>
@@ -75,8 +75,9 @@
             <label class="choice not-available"><input type="radio" name="status" value="not_available" required> Not Available</label>
           </div>
         </fieldset>
-        <label class="consent"><input id="publicContactConsent" type="checkbox"><span>Optional: allow my name, blood group, city/state and phone to appear in donor search while my confirmation is current. My exact area will not be shown.</span></label>
+        <label class="consent"><input id="publicContactConsent" type="checkbox"><span>Optional: allow my blood group and city-level availability to appear in patient search while my confirmation is current. Search results use a privacy-safe donor label and never show my name, phone, email, or exact area.</span></label>
         <label class="consent"><input id="emergencyResponseConsent" type="checkbox"><span>Optional: allow my current availability status and last-confirmed time to be shown for matching urgent requests in my city and blood group. I may choose whether to respond to each request.</span></label>
+        <div class="field"><label for="availabilityExpiry">Availability confirmation duration</label><select id="availabilityExpiry"><option value="4">4 hours</option><option value="12">12 hours</option><option value="24" selected>24 hours</option></select></div>
         <button id="confirmAvailability" type="submit">Confirm My Availability</button>
         <p class="message" id="availabilityMessage" aria-live="polite"></p>
       </form>
