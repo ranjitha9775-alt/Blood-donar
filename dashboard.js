@@ -458,7 +458,7 @@ async function searchPatientDonors(event) {
       const card = document.createElement("article");
       card.className = "search-result";
       card.append(
-        makeTextElement("strong", `${donor.display_name} ${index + 1} · ${donor.blood_group}`),
+        makeTextElement("strong", `${donor.display_name} match ${index + 1} · ${donor.blood_group}`),
         makeTextElement("p", `${donor.city}, ${donor.state} · ${donor.availability_status}`),
         makeTextElement("p", "Approximate city-level location; no distance is calculated because the search origin has no reliable coordinates."),
         makeTextElement("p", `Last confirmed: ${formatDashboardDate(donor.last_confirmed_at)} · ${

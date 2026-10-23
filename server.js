@@ -2576,7 +2576,7 @@ app.get('/api/donors/search', requireDatabase, requireSession, rateLimit(30, 60 
          AND d.availability_expires_at > UTC_TIMESTAMP()`;
     const areaFilter = area ? 'AND LOWER(d.place) = LOWER(?)' : '';
     const [donors] = await db.execute(
-      `SELECT 'Available donor' AS display_name, d.blood_group, d.city, d.state,
+      `SELECT 'Registered donor' AS display_name, d.blood_group, d.city, d.state,
               d.emergency_response_consent = 1 AS emergency_matching_enabled,
               CASE WHEN COALESCE(d.availability_mode, 'general') = 'selected_dates'
                 THEN 'Available on selected date' ELSE 'Available' END AS availability_status,
