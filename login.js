@@ -53,6 +53,10 @@
   }
 
   function showAvailability(user) {
+    if (user.role === "blood_bank") {
+      window.location.assign("/blood-bank-review.html");
+      return;
+    }
     loginPanel.hidden = true;
     availabilityPanel.hidden = false;
     document.getElementById("profileName").textContent = user.full_name;

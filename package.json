@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "check": "node --check server.js && node --check app.js && node --check login.js && node --check admin.js && node --check dashboard.js"
+    "check": "node --check server.js && node --check app.js && node --check login.js && node --check admin.js && node --check dashboard.js && node --check blood-bank-review.js"
   },
   "type": "commonjs",
   "engines": {

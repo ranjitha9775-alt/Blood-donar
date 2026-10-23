@@ -1,6 +1,7 @@
 "use strict";
 
 let dashboardUser = null;
+let selectedAvailabilityDates = [];
 
 async function requestJson(url, options = {}) {
   const response = await fetch(url, {
@@ -35,6 +36,45 @@ function makeTextElement(tag, text, className = "") {
   return element;
 }
 
+function renderAvailabilityDates() {
+  const container = document.getElementById("availabilityDateList");
+  const mode = document.getElementById("availabilityMode");
+  const useSelectedDates = mode.value === "selected_dates";
+  document.getElementById("selectedDateControls").hidden = !useSelectedDates;
+  document.getElementById("availabilityExpiryField").hidden = useSelectedDates;
+  if (!container) return;
+  if (!selectedAvailabilityDates.length) {
+    container.replaceChildren(makeTextElement("p", "No future dates saved.", "muted"));
+    return;
+  }
+  const rows = selectedAvailabilityDates
+    .slice()
+    .sort((left, right) => left.date.localeCompare(right.date))
+    .map(item => {
+      const row = document.createElement("div");
+      row.className = "request";
+      const label = makeTextElement("span", `${item.date} · ${item.status === "available" ? "Available" : "Not available"}`);
+      const toggle = makeTextElement("button",
+        item.status === "available" ? "Mark unavailable" : "Mark available");
+      toggle.type = "button";
+      toggle.className = "button-secondary";
+      toggle.addEventListener("click", () => {
+        item.status = item.status === "available" ? "unavailable" : "available";
+        renderAvailabilityDates();
+      });
+      const remove = makeTextElement("button", "Remove date");
+      remove.type = "button";
+      remove.className = "button-secondary";
+      remove.addEventListener("click", () => {
+        selectedAvailabilityDates = selectedAvailabilityDates.filter(date => date.date !== item.date);
+        renderAvailabilityDates();
+      });
+      row.append(label, toggle, remove);
+      return row;
+    });
+  container.replaceChildren(...rows);
+}
+
 async function loadDonorAvailability() {
   const message = document.getElementById("availabilityMessage");
   try {
@@ -58,8 +98,16 @@ async function loadDonorAvailability() {
     );
     document.getElementById("publicContactConsent").checked = data.public_contact_consent;
     document.getElementById("emergencyResponseConsent").checked = data.emergency_response_consent;
+    document.getElementById("availabilityMode").value =
+      data.availability_mode === "selected_dates" ? "selected_dates" : "general";
+    selectedAvailabilityDates = Array.isArray(data.selected_dates)
+      ? data.selected_dates.map(item => ({ date: item.date, status: item.status }))
+      : [];
+    renderAvailabilityDates();
     message.textContent = data.available_until
       ? `Confirmation expiry: ${formatDashboardDate(data.available_until)}.`
+      : data.availability_mode === "selected_dates"
+        ? "Your schedule applies only to the selected dates shown above."
       : data.last_confirmed_at
         ? "You are not currently listed as available."
         : "You have not confirmed availability yet.";
@@ -77,6 +125,15 @@ async function saveDonorAvailability(status) {
   const message = document.getElementById("availabilityMessage");
   buttons.forEach(button => { button.disabled = true; });
   message.textContent = "Saving your availability…";
+  const mode = status === "not_available"
+    ? "unavailable"
+    : document.getElementById("availabilityMode").value;
+  if (mode === "selected_dates" &&
+      !selectedAvailabilityDates.some(item => item.status === "available")) {
+    message.textContent = "Add at least one future date marked Available before confirming selected-date availability.";
+    buttons.forEach(button => { button.disabled = false; });
+    return;
+  }
   try {
     const result = await requestJson("/api/availability/status", {
       method: "POST",
@@ -84,7 +141,9 @@ async function saveDonorAvailability(status) {
         status,
         public_contact_consent: document.getElementById("publicContactConsent").checked,
         emergency_response_consent: document.getElementById("emergencyResponseConsent").checked,
-        expires_in_hours: Number(document.getElementById("availabilityExpiry").value)
+        expires_in_hours: Number(document.getElementById("availabilityExpiry").value),
+        mode,
+        selected_dates: mode === "selected_dates" ? selectedAvailabilityDates : []
       })
     });
     await loadDonorAvailability();
@@ -95,13 +154,80 @@ async function saveDonorAvailability(status) {
       console.warn("Could not signal the open admin dashboard to refresh:", error);
     }
     message.textContent = result.status === "Available"
-      ? `Your availability was saved until ${formatDashboardDate(result.available_until)}.`
+      ? mode === "selected_dates"
+        ? "Your selected availability dates were saved."
+        : `Your availability was saved until ${formatDashboardDate(result.available_until)}.`
       : "Your status was saved as Not Available.";
   } catch (error) {
     console.error("Donor availability could not be saved:", error);
     message.textContent = error.message;
   } finally {
     buttons.forEach(button => { button.disabled = false; });
+  }
+}
+
+async function loadDonorHealthScreening() {
+  const status = document.getElementById("healthScreeningStatus");
+  const message = document.getElementById("healthScreeningMessage");
+  try {
+    const { screening } = await requestJson("/api/donor/health-screening");
+    if (!screening) {
+      status.textContent = "Pending Review · No screening submitted";
+      return;
+    }
+    const reviewLabel = screening.review_status === "Cleared"
+      ? "Cleared by authorized blood-bank staff (not final donation eligibility)"
+      : screening.review_status;
+    status.textContent = `${reviewLabel} · Submitted ${formatDashboardDate(screening.submitted_at)}${
+      screening.reviewed_at ? ` · Reviewed ${formatDashboardDate(screening.reviewed_at)}` : ""
+    }`;
+    const form = document.getElementById("healthScreeningForm");
+    for (const [key, id] of [
+      ["feeling_well", "feelingWell"],
+      ["recent_illness", "recentIllness"],
+      ["taking_medication", "takingMedication"],
+      ["previously_deferred", "previouslyDeferred"]
+    ]) {
+      form.querySelector(`#${id}`).value = screening.responses?.[key] || "";
+    }
+    form.elements.screeningLastDonationDate.value = screening.responses?.last_donation_date || "";
+    if (screening.review_notes) message.textContent = `Reviewer note: ${screening.review_notes}`;
+  } catch (error) {
+    console.error("Donor health screening could not be loaded:", error);
+    status.textContent = "Health screening unavailable";
+    message.textContent = error.message;
+  }
+}
+
+async function submitDonorHealthScreening(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = document.getElementById("submitHealthScreening");
+  const message = document.getElementById("healthScreeningMessage");
+  if (!form.reportValidity()) return;
+  button.disabled = true;
+  message.textContent = "Submitting your screening for authorized review…";
+  try {
+    const result = await requestJson("/api/donor/health-screening", {
+      method: "POST",
+      body: JSON.stringify({
+        responses: {
+          feeling_well: form.elements.feelingWell.value,
+          recent_illness: form.elements.recentIllness.value,
+          taking_medication: form.elements.takingMedication.value,
+          previously_deferred: form.elements.previouslyDeferred.value,
+          last_donation_date: form.elements.screeningLastDonationDate.value
+        }
+      })
+    });
+    document.getElementById("healthScreeningStatus").textContent =
+      `${result.screening.review_status} · Submitted ${formatDashboardDate(result.screening.submitted_at)}`;
+    message.textContent = result.message;
+  } catch (error) {
+    console.error("Donor health screening could not be submitted:", error);
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -153,15 +279,17 @@ async function loadDonorEmergencyRequests() {
         contactCheckbox.type = "checkbox";
         contactCheckbox.className = "share-contact";
         const contactText = document.createElement("span");
-        contactText.textContent = "If I select Available, I consent to sharing my name and phone number with this patient so we can coordinate.";
+        contactText.textContent = "If I accept this request, I consent to sharing my name and phone number with this patient so we can coordinate.";
         contactConsent.append(contactCheckbox, contactText);
         details.append(contactConsent);
         const actions = document.createElement("div");
         actions.className = "request-actions";
-        const canHelp = makeTextElement("button", "Available");
-        const cannotHelp = makeTextElement("button", "Not available");
+        const canHelp = makeTextElement("button", "Accept Request");
+        const busy = makeTextElement("button", "Busy / Cannot Donate Now");
+        const decline = makeTextElement("button", "Decline Request");
         canHelp.type = "button";
-        cannotHelp.type = "button";
+        busy.type = "button";
+        decline.type = "button";
         canHelp.disabled = request.can_offer_help !== 1;
         if (canHelp.disabled) {
           details.append(makeTextElement("p", "Confirm current availability and opt into emergency matching to respond Available."));
@@ -169,10 +297,13 @@ async function loadDonorEmergencyRequests() {
         canHelp.addEventListener("click", () => respondToEmergencyRequest(
           request.request_id, "can_help", contactCheckbox.checked, actions
         ));
-        cannotHelp.addEventListener("click", () => respondToEmergencyRequest(
-          request.request_id, "cannot_help", false, actions
+        busy.addEventListener("click", () => respondToEmergencyRequest(
+          request.request_id, "busy", false, actions
         ));
-        actions.append(canHelp, cannotHelp);
+        decline.addEventListener("click", () => respondToEmergencyRequest(
+          request.request_id, "declined", false, actions
+        ));
+        actions.append(canHelp, busy, decline);
         details.append(actions);
       }
       viewButton.addEventListener("click", async () => {
@@ -209,8 +340,10 @@ async function loadDonorEmergencyRequests() {
 
 async function respondToEmergencyRequest(requestId, response, shareContact, actions) {
   const message = document.getElementById("emergencyRequestsMessage");
-  const actionLabel = response === "can_help" ? "Available" : "Not available";
-  const contactNotice = shareContact
+  const actionLabel = response === "can_help" ? "accept this request"
+    : response === "busy" ? "busy for this request"
+      : "decline this request";
+  const contactNotice = response === "can_help" && shareContact
     ? " Your name and phone number will be shared with the patient."
     : " Your contact details will remain private.";
   if (!window.confirm(`Confirm you are ${actionLabel} for this request?${contactNotice} This does not guarantee attendance or donation.`)) {
@@ -248,7 +381,7 @@ async function loadPatientResponses() {
       card.append(
         makeTextElement("strong", `Request ${request.request_id} · ${request.blood_group} · ${request.units} unit(s) · ${request.city}${request.district ? `, ${request.district}` : ""}`),
         makeTextElement("p", `Status: ${request.status}. Needed by ${formatDashboardDate(request.needed_at)}.`),
-        makeTextElement("p", `Responses: ${request.counts.can_help} donor(s) can help, ${request.counts.cannot_help} cannot help, ${request.counts.pending} waiting, ${request.counts.no_response} no response.`)
+        makeTextElement("p", `Responses: ${request.counts.can_help} accepted (confirmation pending), ${request.counts.busy} busy, ${request.counts.cannot_help} declined, ${request.counts.pending} pending, ${request.counts.no_response} no response.`)
       );
       request.donor_responses.forEach(donorResponse => {
         const responseLine = document.createElement("div");
@@ -297,6 +430,10 @@ async function searchPatientDonors(event) {
     units: document.getElementById("searchUnits").value,
     emergency: String(document.getElementById("searchEmergency").checked)
   });
+  const area = document.getElementById("searchArea").value.trim();
+  const requiredDate = document.getElementById("searchRequiredDate").value;
+  if (area) params.set("area", area);
+  if (requiredDate) params.set("required_date", requiredDate);
   try {
     const data = await requestJson(`/api/donors/search?${params}`);
     if (!data.donors.length) {
@@ -323,8 +460,12 @@ async function searchPatientDonors(event) {
       card.append(
         makeTextElement("strong", `${donor.display_name} ${index + 1} · ${donor.blood_group}`),
         makeTextElement("p", `${donor.city}, ${donor.state} · ${donor.availability_status}`),
-        makeTextElement("p", "Approximate location; distance is not available because donor coordinates are not stored."),
-        makeTextElement("p", `Last confirmed: ${formatDashboardDate(donor.last_confirmed_at)} · Available until: ${formatDashboardDate(donor.available_until)}.`)
+        makeTextElement("p", "Approximate city-level location; no distance is calculated because the search origin has no reliable coordinates."),
+        makeTextElement("p", `Last confirmed: ${formatDashboardDate(donor.last_confirmed_at)} · ${
+          donor.availability_mode === "selected_dates"
+            ? `Available on ${donor.matched_date || requiredDate}.`
+            : `Available until ${formatDashboardDate(donor.available_until)}.`
+        }`)
       );
       if (document.getElementById("searchEmergency").checked) {
         card.append(makeTextElement(
@@ -416,7 +557,12 @@ async function loadDashboard() {
     dashboardUser = user;
     const expectedRole = isPatientDashboard ? "patient" : "donor";
     if (user.role !== expectedRole) {
-      window.location.replace(user.role === "donor" ? "/donar-dashboard.html" : "/patient-dashboard.html");
+      const dashboardByRole = {
+        donor: "/donar-dashboard.html",
+        patient: "/patient-dashboard.html",
+        blood_bank: "/blood-bank-review.html"
+      };
+      window.location.replace(dashboardByRole[user.role] || "/login");
       return;
     }
     welcome.textContent = `Welcome, ${user.full_name}.`;
@@ -425,6 +571,9 @@ async function loadDashboard() {
     if (user.role === "donor") {
       await loadDonorAvailability();
       document.getElementById("availabilityCard").hidden = false;
+      document.getElementById("healthScreeningCard").hidden = false;
+      document.getElementById("healthScreeningForm").addEventListener("submit", submitDonorHealthScreening);
+      await loadDonorHealthScreening();
       document.getElementById("emergencyRequestsCard").hidden = false;
       await loadDonorEmergencyRequests();
       window.setInterval(loadDonorAvailability, 15000);
@@ -477,6 +626,28 @@ document.getElementById("availableToDonate")?.addEventListener("click", () => {
 
 document.getElementById("notAvailable")?.addEventListener("click", () => {
   saveDonorAvailability("not_available");
+});
+
+document.getElementById("availabilityMode")?.addEventListener("change", renderAvailabilityDates);
+document.getElementById("addAvailabilityDate")?.addEventListener("click", () => {
+  const input = document.getElementById("availabilityDate");
+  const date = input.value;
+  const today = new Date().toISOString().slice(0, 10);
+  if (!date || date <= today) {
+    document.getElementById("availabilityMessage").textContent =
+      "Choose a date after today.";
+    return;
+  }
+  if (selectedAvailabilityDates.some(item => item.date === date)) {
+    document.getElementById("availabilityMessage").textContent =
+      "That date is already in your list.";
+    return;
+  }
+  selectedAvailabilityDates.push({ date, status: "available" });
+  input.value = "";
+  document.getElementById("availabilityMessage").textContent =
+    "Date added locally. Select Available to Donate to save your selected dates.";
+  renderAvailabilityDates();
 });
 
 loadDashboard();

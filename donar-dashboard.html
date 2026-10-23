@@ -62,21 +62,54 @@
 
     <section class="card" id="availabilityCard" aria-labelledby="availabilityTitle" hidden>
       <h2 id="availabilityTitle">My Donation Availability</h2>
-      <p class="muted">Confirm for up to 24 hours. Unknown or expired confirmations are shown as Unconfirmed and are not matched.</p>
+      <p class="muted">Set whether you are available to donate and choose how long your confirmation remains current. This records availability only; donors do not enter blood-unit quantities. Unknown or expired confirmations are shown as Unconfirmed and are not matched.</p>
       <div class="status-panel">
         <div><strong>Current status</strong><br><span class="status-label" id="availabilityStatus">Loading…</span></div>
         <div><strong>Last confirmed</strong><br><time class="muted" id="lastConfirmedAt">Not confirmed yet</time></div>
       </div>
       <div class="choice-list" aria-label="Set donation availability">
-        <button id="availableToDonate" class="choice available" type="button" aria-pressed="false">Available to donate</button>
-        <button id="notAvailable" class="choice not-available" type="button" aria-pressed="false">Not available</button>
+        <button id="availableToDonate" class="choice available" type="button" aria-pressed="false">Available to Donate</button>
+        <button id="notAvailable" class="choice not-available" type="button" aria-pressed="false">Not Available</button>
       </div>
       <div>
+        <div class="field">
+          <label for="availabilityMode">Availability schedule</label>
+          <select id="availabilityMode">
+            <option value="general">Generally Available (confirmation expires)</option>
+            <option value="selected_dates">Available on Selected Dates</option>
+          </select>
+        </div>
+        <div id="selectedDateControls" hidden>
+          <div class="field">
+            <label for="availabilityDate">Add a future available date</label>
+            <div class="choice-list">
+              <input id="availabilityDate" type="date">
+              <button id="addAvailabilityDate" class="button-secondary" type="button">Add date</button>
+            </div>
+          </div>
+          <div id="availabilityDateList" aria-live="polite"></div>
+          <p class="muted">Each selected date is saved separately. A date does not mean you are available on other dates.</p>
+        </div>
         <label class="consent"><input id="publicContactConsent" type="checkbox"><span>Optional: allow my blood group and city-level availability to appear in patient search while my confirmation is current. Search results use a privacy-safe donor label and never show my name, phone, email, or exact area.</span></label>
         <label class="consent"><input id="emergencyResponseConsent" type="checkbox"><span>Optional: allow my current availability status and last-confirmed time to be shown for matching urgent requests in my city and blood group. I may choose whether to respond to each request.</span></label>
-        <div class="field"><label for="availabilityExpiry">Availability confirmation duration</label><select id="availabilityExpiry"><option value="4">4 hours</option><option value="12">12 hours</option><option value="24" selected>24 hours</option></select></div>
+        <div class="field" id="availabilityExpiryField"><label for="availabilityExpiry">Availability confirmation duration</label><select id="availabilityExpiry"><option value="4">4 hours</option><option value="12">12 hours</option><option value="24" selected>24 hours</option></select></div>
         <p class="message" id="availabilityMessage" aria-live="polite"></p>
       </div>
+    </section>
+
+    <section class="card" id="healthScreeningCard" aria-labelledby="healthScreeningTitle" hidden>
+      <h2 id="healthScreeningTitle">Donor Health Screening</h2>
+      <p class="muted">Voluntary and private. Your answers are visible only to you and authorized administrators for review. This form does not determine eligibility; the blood bank performs clinical screening.</p>
+      <p class="status-label needs-confirmation" id="healthScreeningStatus">Loading screening status…</p>
+      <form id="healthScreeningForm">
+        <div class="field"><label for="feelingWell">Are you feeling well today?</label><select id="feelingWell" name="feelingWell" required><option value="">Choose</option><option value="yes">Yes</option><option value="no">No</option><option value="not_sure">Not sure</option></select></div>
+        <div class="field"><label for="recentIllness">Have you recently had an illness or fever?</label><select id="recentIllness" name="recentIllness" required><option value="">Choose</option><option value="yes">Yes</option><option value="no">No</option><option value="not_sure">Not sure</option></select></div>
+        <div class="field"><label for="takingMedication">Are you currently taking medication?</label><select id="takingMedication" name="takingMedication" required><option value="">Choose</option><option value="yes">Yes</option><option value="no">No</option><option value="not_sure">Not sure</option></select></div>
+        <div class="field"><label for="previouslyDeferred">Have you previously been deferred from donating?</label><select id="previouslyDeferred" name="previouslyDeferred" required><option value="">Choose</option><option value="yes">Yes</option><option value="no">No</option><option value="not_sure">Not sure</option></select></div>
+        <div class="field"><label for="screeningLastDonationDate">Last donation date (optional)</label><input id="screeningLastDonationDate" name="screeningLastDonationDate" type="date"></div>
+        <button type="submit" id="submitHealthScreening">Submit screening for review</button>
+        <p class="message" id="healthScreeningMessage" aria-live="polite"></p>
+      </form>
     </section>
 
     <section class="card" id="emergencyRequestsCard" aria-labelledby="emergencyRequestsTitle" hidden>

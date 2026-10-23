@@ -11,14 +11,14 @@ This link works only when the LifeDrop server is running on your computer. It is
 ## Run the application
 
 1. Install Node.js and MySQL.
-2. Create the database named in `DB_NAME` (defaults to `lifedrop`).
+2. Use the existing `blood_donar_portal` database. The application does not drop, recreate, or replace it.
 3. If you do not already have a `.env` file, create one from the example in PowerShell:
 
    ```powershell
    Copy-Item .env.example .env
    ```
 
-   If `.env` already exists, keep it and edit it without overwriting its database settings.
+   If `.env` already exists, keep its credentials and set `DB_NAME=blood_donar_portal`.
 4. Configure the database connection and private admin credentials in `.env`:
 
    ```env
@@ -27,7 +27,7 @@ This link works only when the LifeDrop server is running on your computer. It is
    DB_PORT=3306
    DB_USER=your_mysql_user
    DB_PASSWORD=your_mysql_password
-   DB_NAME=lifedrop
+   DB_NAME=blood_donar_portal
    ADMIN_USERNAME=choose_a_private_admin_username
    ADMIN_PASSWORD=use_a_unique_password_of_at_least_12_characters
    ```
@@ -37,79 +37,74 @@ This link works only when the LifeDrop server is running on your computer. It is
 7. Run `npm install`, then `npm start`.
 8. Open `http://localhost:3000`. Visit `http://localhost:3000/admin` and sign in with `ADMIN_USERNAME` and `ADMIN_PASSWORD`. `localhost` is only your own computer; this is not the public deployed website URL.
 
-On startup, the server creates the `camp_registrations`, `users`, `admin_users`, `blood_requests`, and `donor_request_responses` tables, and creates or migrates the `donors` and `patients` tables. It adds donor availability confirmation and consent columns, a unique username column to `users`, a nullable user link to `patients`, and a state field to blood requests; existing accounts and requests are preserved. Existing accounts without a username can continue to sign in using their email, while new registrations use usernames. Donors whose records have no confirmation are **Unconfirmed**, not assumed available or explicitly unavailable. The database user needs permission to create/alter tables and create indexes. The local health endpoint is `http://localhost:3000/api/health`.
+On startup, the server detects the portal schema, preserves its existing `recipient` accounts, adds the `patient` role used by the current app, and adapts donor/request fields without deleting records. It creates the date-availability, date-history, and private screening tables, adds missing compatible columns/indexes, and backfills donor profiles from existing donor accounts without marking them available. Existing `donor_availability` rows are synchronized only when they contain an actual confirmation timestamp. Unknown confirmations stay **Unconfirmed**. The database user needs permission to create/alter tables and indexes. The local health endpoint is `http://localhost:3000/api/health`. The equivalent additive DDL for the portal database is in [`migrations/004_portal_availability_and_screening.sql`](./migrations/004_portal_availability_and_screening.sql).
 
 ## Donor availability and emergency notifications
 
-- Donors manage availability in **My Donation Availability** at `/donar-dashboard.html` (or `/donor-dashboard.html`). Choose **Available to donate** or **Not available** to save immediately. Available confirmations expire after the selected 4, 12, or 24 hours. MySQL records the donor-selected status, database-generated `last_confirmed_at`, and `availability_expires_at`; unavailable selections are excluded from search and matching. Unknown or expired confirmations are **Unconfirmed** and are not renewed automatically. Searches also expire stale rows in MySQL and exclude them. The donor dashboard refreshes its saved status after each update; an open admin dashboard in the same browser refreshes immediately, and admin dashboard data otherwise refreshes every 15 seconds.
-- Donors separately opt into privacy-safe patient search and in-app emergency matching. Both preferences default off for existing and newly registered donors. `/patient-dashboard.html` searches confirmed, opted-in donors by blood group and Karnataka location. The patient view returns only a generic donor label, blood group, city/state, current status, confirmation time, and expiry; it never returns donor email, phone, name, or exact area. Donor coordinates are not stored, so 5/10/25/50 km choices use approximate city-level matching and do not show fabricated distances. **Wider search** searches across Karnataka. Search refreshes when submitted; donor confirmations are checked against MySQL expiry on every search.
-- Patients can choose **Request Help** from a live result or submit through the existing request form. The app saves blood group, hospital, city/state/district, units, urgency, request time, and status in MySQL. For an **Urgent** request with matching enabled, it creates durable in-app notifications for donors who opted in to emergency matching and have a current confirmation in the same blood group, city, and state. This is a conservative exact-group match, **not a medical compatibility determination**; the treating blood bank or medical team must confirm compatibility before transfusion.
-- A donor's dashboard notification shows a request ID, blood group, units, hospital name, approximate city/district, request time and response deadline. It does not show the patient's name, address or phone. Donors may respond **Available** or **Not available**. They must confirm before submission; an Available response also requires a still-current availability confirmation and emergency-matching consent. A donor's name/phone are shared with the patient only if that donor separately checks the per-request contact-sharing consent before choosing Available.
-- The donor dashboard keeps unread notifications and response history in MySQL. Donor responses display **Pending**, **Accepted**, **Declined**, or **Expired** (plus closed requests); the patient dashboard shows response totals and per-donor status. Silence or **Accepted** does not guarantee attendance or donation. Patients receive a donor name/phone only after that donor explicitly consents to contact sharing for the individual request.
+- Donors manage **My Donation Availability** at `/donar-dashboard.html` (or `/donor-dashboard.html`). Choose **Generally Available** or **Available on Selected Dates**, then **Available to Donate** or **Not Available**. General availability requires a 4-, 12-, or 24-hour confirmation; MySQL records server-generated `last_confirmed_at` and the expiry. Date availability stores each future date separately, including per-date unavailable overrides; a selected date never implies availability on another date. Expired general confirmations and elapsed selected dates are excluded by server queries. Unknown confirmations remain **Unconfirmed**. The admin dashboard separates Available, Not Available, Unconfirmed, and Expired. Donors never enter blood-unit quantities.
+- Units are kept separate by workflow: patients enter **units required** on emergency requests, while blood-bank inventory results report stock units from the existing stock source. Donor availability does not represent a number of units available.
+- Donors separately opt into privacy-safe patient search and in-app emergency matching. Both preferences default off for existing donors. `/patient-dashboard.html` searches confirmed, opted-in donors by blood group, Karnataka location, optional locality, and optional required date. Results use a generic donor label, group and city/state only; no email, phone, name, health answers, or exact address is returned. The app does not have a reliable patient search-origin coordinate, so 5/10/25/50 km choices are approximate city-level search scopes—not calculated distances. **Wider search** searches Karnataka. The treating blood bank/medical team must confirm compatibility and eligibility.
+- **Donor Health Screening** is separate from availability. Donors submit a voluntary private questionnaire; it does not set availability or determine medical eligibility. Only the donor and authenticated users with the `blood_bank` role can access the answers. Blood-bank staff review through `/blood-bank-review.html`; the app does not create or promote staff accounts. A trusted administrator must provision a blood-bank staff login. A review status is not final clinical clearance.
+- Patients can choose **Request Help** from a live result or submit through the existing request form. The app saves blood group, hospital, city/state/district, units, urgency, required date, request time, and status to the existing MySQL `blood_requests` table. For an **Urgent** request with matching enabled, it creates durable in-app notifications for donors who opted into emergency matching and match the exact blood group/city plus current general availability or the requested selected date. This is a conservative exact-group match, **not a medical compatibility determination**; the treating blood bank or medical team must confirm compatibility before transfusion.
+- A donor's dashboard notification shows a request ID, blood group, units, hospital name, approximate city/district, request time and response deadline. It does not show the patient's name, address or phone. Donors may **Accept Request**, select **Busy / Cannot Donate Now**, or **Decline Request**. Accepting requires a current matching availability and emergency-matching consent; contact details are shared only when the donor separately consents for that request.
+- The donor dashboard keeps unread notifications and response history in MySQL. Responses distinguish **Pending**, **Accepted — Awaiting Contact**, **Busy**, **Declined**, and **No Response**; expired pending rows are recorded as expired without inventing a donor response time. Additional matching is attempted after all current pending/accepted responses are exhausted. The patient dashboard shows response totals and per-donor status. Silence or **Accepted** does not guarantee attendance or donation. Patients receive a donor name/phone only after that donor explicitly consents to contact sharing for the individual request.
 - The blood-bank search is separate from individual donors. LifeDrop's existing blood-stock route queries the e-RaktKosh portal and displays reported stock when returned; results are not verified inventory and must be confirmed directly with the blood bank. Patients can also open the [official e-RaktKosh portal](https://eraktkosh.mohfw.gov.in/eraktkoshPortal/). For emergencies in India, call **112**.
 - The response deadline is set when a request is submitted. Configure `DONOR_RESPONSE_WINDOW_MINUTES` in the private `.env` (default `120`; accepted range `1`–`1440`) before starting the server. An unanswered notification becomes **Expired** at its stored deadline; silence is not acceptance or refusal.
 - **External delivery is not configured.** This release sends no email, SMS or push notification; its notification is an in-app MySQL record available when a donor logs in. Providing a valid phone number does not trigger SMS. There are no credentials to add for this feature. To add a provider later, configure its credentials as private server-side environment variables, integrate its delivery API, and report delivery only after the provider confirms success. Reminder sending is also not enabled.
 - For urgent needs, contact the hospital or blood bank immediately. LifeDrop does not verify clinical eligibility, blood inventory, donor arrival or fulfillment.
 
-The additive migrations are [`migrations/001_donor_availability_confirmation.sql`](./migrations/001_donor_availability_confirmation.sql), [`migrations/002_emergency_in_app_notifications.sql`](./migrations/002_emergency_in_app_notifications.sql), and [`migrations/003_blood_request_state.sql`](./migrations/003_blood_request_state.sql). Normal app startup checks for the state column and adds it if missing; it creates the response table without deleting existing records. The configured database for this project is `lifedrop`; the separate `blood_donar_portal` database has a different schema and is not used by this app. For a manual migration, take a verified backup and apply only the migration(s) missing from that database, once, before starting the app; don't manually re-run a migration already applied.
+The additive migrations are [`migrations/001_donor_availability_confirmation.sql`](./migrations/001_donor_availability_confirmation.sql), [`migrations/002_emergency_in_app_notifications.sql`](./migrations/002_emergency_in_app_notifications.sql), [`migrations/003_blood_request_state.sql`](./migrations/003_blood_request_state.sql), and [`migrations/004_portal_availability_and_screening.sql`](./migrations/004_portal_availability_and_screening.sql). Normal startup applies compatible schema checks automatically. Take a verified backup before manually applying schema changes; the startup migrations are additive and preserve existing rows.
 
 ### Availability and request API
 
-- `GET /api/availability/status` and `POST /api/availability/status` — donor-only current status and confirmation. POST accepts `status`, `public_contact_consent`, `emergency_response_consent`, and optional `expires_in_hours` (`4`, `12`, or `24`).
-- `GET /api/donors/search?state=Karnataka&city=Mysuru&blood_group=O%2B&radius_km=25&units=1&emergency=true` — patient-session-only, privacy-safe results from MySQL; `radius_km` accepts `5`, `10`, `25`, `50`, or `wider`. The kilometer options cannot calculate real radii without donor coordinates; they use approximate city matching, while `wider` searches statewide.
-- `POST /api/blood-requests` — authenticated request create; writes request data and matching donor-response notification rows transactionally. `GET /api/donor/notifications` and `POST /api/donor/emergency-requests/:requestId/response` serve donor notifications/responses; `GET /api/my-emergency-responses` serves the signed-in patient's own request responses.
-- `GET /api/admin/dashboard` — admin-session-only; donor status is calculated from actual confirmation and expiry fields. No search route returns donor phone or email.
+- `GET /api/availability/status`, `POST /api/availability/status` — authenticated donor status. POST accepts `status`, `mode` (`general`, `selected_dates`, `unavailable`), `selected_dates`, consent flags, and a 4/12/24-hour confirmation duration. Timestamps are generated server-side.
+- `GET /api/donors/search?state=Karnataka&city=Mysuru&blood_group=O%2B&radius_km=25&required_date=YYYY-MM-DD&units=1&emergency=true` — patient-session-only, privacy-safe exact blood-group search; `area` is optional and `radius_km` accepts `5`, `10`, `25`, `50`, or `wider`. Without patient coordinates, the km options are city-level scopes, not true distance calculations.
+- `GET`, `POST /api/donor/health-screening` — donor-only private questionnaire.
+- `GET /api/blood-bank/health-screenings`, `POST /api/blood-bank/health-screenings/:screeningId/review` — blood-bank-role-only screening review. Admin and patient APIs do not expose screening answers.
+- `POST /api/blood-requests` — authenticated, transactional emergency request and donor notification creation. Donor notifications/responses use `GET /api/donor/notifications` and `POST /api/donor/emergency-requests/:requestId/response`; patient response tracking uses `GET /api/my-emergency-responses`.
+- `GET /api/admin/dashboard` — protected admin endpoint with actual availability states, confirmation/expiry, saved dates, and request records. Search responses never include donor contact or health information.
 
-No new environment variables are required. Keep the existing `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME`; `SESSION_SECRET`, `ADMIN_USERNAME`, and `ADMIN_PASSWORD` retain their current requirements. `DONOR_RESPONSE_WINDOW_MINUTES` remains optional (default 120). No SMS provider credentials are configured or needed; notifications are in-app only.
+Required settings remain `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME=blood_donar_portal`, `SESSION_SECRET`, `ADMIN_USERNAME`, and `ADMIN_PASSWORD`. `DONOR_RESPONSE_WINDOW_MINUTES` is optional (default 120). A pre-existing account with role `blood_bank` is required to review screening forms; the app intentionally does not create staff accounts. SMS/email/push credentials are not configured; only in-app notifications are sent.
 
 ### Test and verify the feature
 
-1. In the VS Code terminal, from the project folder, run `npm start`. Sign in with a donor test account at `http://localhost:3000/login`, then open `http://localhost:3000/donar-dashboard.html`. Select **Available to Donate**, opt in to emergency matching, and click **Confirm My Availability**. Verify the saved status and timestamp appear. Refresh the page to verify they reload from MySQL.
-2. In MySQL Workbench, inspect the persisted confirmation (adjust the limit as needed):
+1. In VS Code, run `npm start` and open `http://localhost:3000`. Use a dedicated donor test account at `/login`, then open `/donar-dashboard.html`. In **My Donation Availability**, choose **Generally Available**, opt into patient search and emergency responses as desired, choose a confirmation duration, and click **Available to Donate**. Verify status and timestamps, refresh the page, and confirm that **Not Available** excludes the donor.
+2. Choose **Available on Selected Dates**, add at least two future dates, save them, then mark one date unavailable and save again. Verify the list persists after a refresh. Ensure that a patient search for one saved date can match while an adjacent unselected date does not.
+3. Submit a health screening from the donor dashboard. It should display **Pending Review**, remain separate from availability, and never appear in patient search. A valid blood-bank staff account can use `/blood-bank-review.html`; patient and ordinary admin sessions must receive a 403 from the private screening API.
+4. In MySQL Workbench, inspect test-donor confirmation and date records:
 
    ```sql
-   SELECT user_id, availability_status,
-          CASE
-            WHEN available = 1 AND last_confirmed_at IS NOT NULL
-                 AND availability_expires_at > UTC_TIMESTAMP() THEN 'Available'
-            WHEN last_confirmed_at IS NULL THEN 'Unconfirmed'
-            WHEN available = 0 AND availability_status = 'not_available' THEN 'Not Available'
-            ELSE 'Unconfirmed'
-          END AS current_status,
-          last_confirmed_at, availability_expires_at, availability_updated_at
-   FROM donors
-   ORDER BY user_id DESC
-   LIMIT 10;
+   SELECT d.user_id, d.availability_status, d.availability_mode,
+          d.available, d.last_confirmed_at, d.availability_expires_at,
+          d.available_until, ad.available_date, ad.status AS date_status,
+          ad.confirmed_at
+   FROM donors d
+   LEFT JOIN donor_availability_dates ad ON ad.donor_user_id = d.user_id
+   WHERE d.user_id = (
+     SELECT user_id FROM users
+     WHERE username = 'your_test_donor_username' AND role = 'donor'
+   )
+   ORDER BY ad.available_date;
    ```
 
-3. To test expiry immediately, use a **dedicated test donor only** and substitute that account's username. This changes only that test donor's expiry; do not run it for real donors:
+5. Log in as a test patient at `/patient-dashboard.html`; search for O+ in Karnataka/Mysuru using a required date, area, and radius choice. Verify results are privacy-safe and that wider search and the separate blood-bank/e-RaktKosh links remain available when there are no matches. Kilometer filters are approximate because the patient search origin has no coordinates.
+6. Submit an urgent request with units required and a future needed-by date. Verify it appears in MySQL and creates in-app notifications only for opted-in, matching donors. Log in as a notified donor, accept, mark busy, or decline, and verify the patient sees the response. Confirm duplicate responses and late responses are rejected; contact details are disclosed only after per-request consent.
+7. Sign in to `/admin`. Verify All Donors shows every registration, and the Available, Not Available, Unconfirmed, and Expired filters/counts reflect database data. Confirm the saved dates, last confirmation, expiry, patient requests, and response progress. The dashboard refreshes every 15 seconds.
+8. To test general-availability expiry immediately, use a **dedicated test donor only**. This changes only that test donor's confirmation; never run it for a real donor:
 
    ```sql
    UPDATE donors
-   SET availability_expires_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 MINUTE)
+   SET availability_expires_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 MINUTE),
+       available_until = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 MINUTE)
    WHERE user_id = (
      SELECT user_id FROM users
      WHERE username = 'your_test_donor_username' AND role = 'donor'
    );
    ```
 
-   Refresh the donor dashboard and run a donor search. It should show **Unconfirmed**, and the expired donor must not appear in patient search or new matches. Click confirm again only if using the test account.
-4. Use a separate patient test account at `http://localhost:3000/patient-dashboard.html`. Search `Karnataka`, `Mysuru`, `O+`, then use **Request Help** and submit an **Urgent** request with matching enabled. Exact blood group/city/state matches with current confirmation and emergency-matching consent receive an in-app notification; no external message is sent. Confirm a different blood group/city, opted-out donor and expired donor are not matched. With no matching record, verify **No currently confirmed donors found**, **Search wider area**, and the separate blood-bank links.
-5. Sign in as the donor, open the unread notification with **View Request**, and choose **Available** or **Not available**. The browser asks for confirmation. Optionally check the donor contact-sharing box before choosing Available. The patient dashboard refreshes with response status/counts; contact details appear only when explicitly shared.
-6. Repeat with both response choices, click twice (the second response must be rejected), and test a non-matching donor/unauthorized session (must not view or respond to another donor's notification). Close a test request from the existing request board and verify it shows **Request Closed**. For timeout testing, set `DONOR_RESPONSE_WINDOW_MINUTES=1` in `.env`, restart `npm start`, submit a fresh test request and wait one minute; the patient should see **Expired** and a late donor response must be rejected.
+   The dashboard should classify this donor as **Expired** and patient search/new requests must exclude them. Remove only temporary test records created for your own test after verification; never delete existing users or requests.
 
-   To inspect response state without exposing patient contact details:
-
-   ```sql
-   SELECT request_id, donor_user_id, response, matched_at,
-          response_deadline, responded_at, read_at,
-          contact_sharing_consent, updated_at
-   FROM donor_request_responses
-   ORDER BY matched_at DESC
-   LIMIT 20;
-   ```
-
-   Use test accounts and remove only their test requests/accounts after verification. A response never guarantees donor arrival or blood availability; coordinate urgent care with the hospital or blood bank.
+Blood-bank review accounts are not provisioned by the app, and external notification delivery is not configured. Coordinate urgent care directly with the hospital or blood bank; a donor response does not guarantee donation.
 
 ## Deploy online with Railway
 
@@ -118,7 +113,7 @@ LifeDrop serves its frontend and API from one Express service. The frontend uses
 1. Confirm that the GitHub repository `ranjitha9775-alt/Blood-donar` contains the project files (including `server.js`, `package.json`, `package-lock.json`, `admin.html`, `admin.js`, and `index.html`). Commit and push updates from your project folder:
 
    ```powershell
-   git add .gitignore .env.example README.md package.json package-lock.json server.js app.js login.js login.html admin.html admin.js index.html assets dashboard.js donar-dashboard.html patient-dashboard.html migrations
+   git add .gitignore .env.example README.md package.json package-lock.json server.js app.js login.js login.html admin.html admin.js index.html assets dashboard.js blood-bank-review.html blood-bank-review.js donar-dashboard.html patient-dashboard.html migrations
    git commit -m "Prepare LifeDrop for deployment"
    git push origin main
    ```

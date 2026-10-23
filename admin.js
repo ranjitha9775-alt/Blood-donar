@@ -36,6 +36,53 @@
     return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
   }
 
+  function normalizeAvailabilityValue(value) {
+    const normalized = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+    if (normalized === "available") return "available";
+    if (normalized === "expired") return "expired";
+    if (["unavailable", "not_available"].includes(normalized)) return "unavailable";
+    return "unconfirmed";
+  }
+
+  function getDonorAvailabilityStatus(donor) {
+    const status = normalizeAvailabilityValue(
+      donor.availability_status_code ?? donor.availability_status
+    );
+    const confirmedAt = Date.parse(donor.last_confirmed_at);
+    if (status === "expired") {
+      return Number.isFinite(confirmedAt) ? "expired" : "unconfirmed";
+    }
+    if (status === "available") {
+      const expiresAt = Date.parse(donor.available_until);
+      const availableFlag = donor.is_available === undefined ||
+        donor.is_available === true ||
+        donor.is_available === 1 ||
+        donor.is_available === "1";
+      if (donor.availability_mode === "selected_dates") {
+        return Number.isFinite(confirmedAt) && availableFlag
+          ? "available"
+          : "unconfirmed";
+      }
+      return Number.isFinite(confirmedAt) &&
+        Number.isFinite(expiresAt) &&
+        expiresAt > Date.now() &&
+        availableFlag
+        ? "available"
+        : "unconfirmed";
+    }
+    if (status === "unavailable" && Number.isFinite(confirmedAt)) {
+      return "unavailable";
+    }
+    return "unconfirmed";
+  }
+
+  function availabilityLabel(status) {
+    if (status === "available") return "Available";
+    if (status === "unavailable") return "Not Available";
+    if (status === "expired") return "Expired";
+    return "Unconfirmed";
+  }
+
   function addRow(tbody, values, emptyMessage) {
     if (values.length === 0) {
       const row = document.createElement("tr");
@@ -62,15 +109,19 @@
     const donors = dashboardData.donors;
     const search = document.getElementById("donorSearch").value.trim().toLowerCase();
     const bloodGroup = document.getElementById("donorBloodFilter").value;
-    const availability = document.getElementById("donorAvailabilityFilter").value;
+    const availability = normalizeAvailabilityValue(
+      document.getElementById("donorAvailabilityFilter").value
+    );
+    const filterByAvailability = document.getElementById("donorAvailabilityFilter").value !== "";
     const filtered = donors.filter(donor => {
+      const donorStatus = getDonorAvailabilityStatus(donor);
       const searchable = [
         donor.full_name, donor.username, donor.phone, donor.blood_group,
         donor.city, donor.place, donor.state, donor.email
       ].join(" ").toLowerCase();
       return (!search || searchable.includes(search)) &&
         (!bloodGroup || donor.blood_group === bloodGroup) &&
-        (!availability || donor.availability_status === availability);
+        (!filterByAvailability || donorStatus === availability);
     });
     document.getElementById("donorResultCount").textContent = `Showing ${filtered.length} of ${donors.length}`;
     const emptyMessage = donors.length === 0
@@ -83,12 +134,13 @@
       donor.blood_group,
       donor.city,
       donor.place,
-      donor.availability_status,
+      availabilityLabel(getDonorAvailabilityStatus(donor)),
       formatDate(donor.available_until),
       formatDate(donor.last_confirmed_at),
       donor.email,
       donor.last_donation_date,
-      formatDate(donor.registered_at)
+      formatDate(donor.registered_at),
+      donor.availability_dates || "—"
     ]), emptyMessage);
   }
 
@@ -151,6 +203,9 @@
       request.contact_number,
       request.units_required,
       `${request.urgency ?? "—"} / ${request.request_status}`,
+      request.request_type === "Blood request"
+        ? `${request.donors_notified} notified · ${request.donors_accepted} accepted · ${request.responses_pending} pending · ${request.donors_declined_or_busy} busy/declined · ${request.responses_no_response} no response`
+        : "No in-app donor notifications",
       formatDate(request.request_date),
       formatDate(request.needed_at)
     ]), "No patient requests are registered.");
@@ -161,7 +216,13 @@
     document.getElementById("totalRegistrations").textContent = data.counts.total_registrations;
     document.getElementById("donorCount").textContent = data.counts.donor_count;
     document.getElementById("availableDonorCount").textContent =
-      data.donors.filter(donor => donor.availability_status === "Available").length;
+      data.counts.available_donor_count;
+    document.getElementById("unavailableDonorCount").textContent =
+      data.counts.unavailable_donor_count;
+    document.getElementById("unconfirmedDonorCount").textContent =
+      data.counts.unconfirmed_donor_count;
+    document.getElementById("expiredDonorCount").textContent =
+      data.counts.expired_donor_count;
     document.getElementById("patientCount").textContent = data.counts.patient_count;
     document.getElementById("requestCount").textContent = data.counts.patient_request_count;
     renderDonors();

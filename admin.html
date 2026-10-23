@@ -96,6 +96,9 @@
         <article class="stat"><span>Total registrations</span><strong id="totalRegistrations">—</strong></article>
         <article class="stat"><span>Donor accounts</span><strong id="donorCount">—</strong></article>
         <article class="stat"><span>Available now</span><strong id="availableDonorCount">—</strong></article>
+        <article class="stat"><span>Not available</span><strong id="unavailableDonorCount">—</strong></article>
+        <article class="stat"><span>Unconfirmed</span><strong id="unconfirmedDonorCount">—</strong></article>
+        <article class="stat"><span>Expired</span><strong id="expiredDonorCount">—</strong></article>
         <article class="stat"><span>Patient accounts</span><strong id="patientCount">—</strong></article>
         <article class="stat"><span>Patient requests</span><strong id="requestCount">—</strong></article>
       </div>
@@ -104,10 +107,10 @@
         <div class="data-tools">
           <div class="filter-field"><label for="donorSearch">Search donors</label><input id="donorSearch" type="search" placeholder="Name, username, phone, city…"></div>
           <div class="filter-field"><label for="donorBloodFilter">Blood group</label><select id="donorBloodFilter"><option value="">All blood groups</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
-          <div class="filter-field"><label for="donorAvailabilityFilter">Availability</label><select id="donorAvailabilityFilter"><option value="">All donors</option><option>Available</option><option>Not Available</option><option>Unconfirmed</option></select></div>
+          <div class="filter-field"><label for="donorAvailabilityFilter">Availability</label><select id="donorAvailabilityFilter"><option value="">All donors</option><option>Available</option><option>Not Available</option><option>Unconfirmed</option><option>Expired</option></select></div>
           <span class="record-count" id="donorResultCount" aria-live="polite"></span>
         </div>
-        <div class="table-scroll"><table><thead><tr><th>Name</th><th>Username</th><th>Phone</th><th>Blood group</th><th>City</th><th>Area</th><th>Availability</th><th>Available until</th><th>Last confirmed</th><th>Email</th><th>Last donation</th><th>Registered</th></tr></thead><tbody id="donorRows"><tr><td colspan="12">Loading donor records…</td></tr></tbody></table></div>
+        <div class="table-scroll"><table><thead><tr><th>Name</th><th>Username</th><th>Phone</th><th>Blood group</th><th>City</th><th>Area</th><th>Availability</th><th>Available until</th><th>Last confirmed</th><th>Email</th><th>Last donation</th><th>Registered</th><th>Saved availability dates</th></tr></thead><tbody id="donorRows"><tr><td colspan="13">Loading donor records…</td></tr></tbody></table></div>
       </section>
       <section class="panel data-panel" id="patientManagement" aria-labelledby="patientManagementTitle">
         <div class="data-heading"><h2 id="patientManagementTitle">Patient Management</h2><p class="muted">Patient accounts and their blood request status</p></div>
@@ -120,7 +123,7 @@
         </div>
         <div class="table-scroll"><table><thead><tr><th>Name</th><th>Username</th><th>Phone</th><th>Required blood group</th><th>City</th><th>Area</th><th>Urgency</th><th>Request status</th><th>Email</th><th>Hospital / units</th><th>Registered</th></tr></thead><tbody id="patientRows"></tbody></table></div>
         <div class="data-heading"><h2>All patient and blood requests</h2><p class="muted">Includes legacy requests and later website requests</p></div>
-        <div class="table-scroll"><table><thead><tr><th>Request type</th><th>Patient / contact</th><th>Age / gender</th><th>Blood group</th><th>Hospital</th><th>City / area</th><th>Contact phone</th><th>Units</th><th>Urgency / status</th><th>Requested</th><th>Needed by</th></tr></thead><tbody id="requestRows"></tbody></table></div>
+        <div class="table-scroll"><table><thead><tr><th>Request type</th><th>Patient / contact</th><th>Age / gender</th><th>Blood group</th><th>Hospital</th><th>City / area</th><th>Contact phone</th><th>Units</th><th>Urgency / status</th><th>Donor response progress</th><th>Requested</th><th>Needed by</th></tr></thead><tbody id="requestRows"></tbody></table></div>
       </section>
     </section>
   </main>
