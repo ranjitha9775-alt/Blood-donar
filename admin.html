@@ -59,6 +59,12 @@
     th { color: #555b66; background: #fafbfc; white-space: nowrap; font-size: 11px; }
     td { min-width: 100px; overflow-wrap: anywhere; }
     td:first-child { font-weight: 700; }
+    .availability-badge { width: fit-content; min-width: 94px; padding: 4px 9px; border-radius: 999px; font-weight: 750; text-align: center; }
+    .availability-badge.available { background: #e7f5ec; color: #176b38; }
+    .availability-badge.not-available { background: #fdebed; color: #a51f32; }
+    .availability-badge.unconfirmed { background: #f0f1f4; color: #555b66; }
+    .availability-badge.expired { background: #fff1db; color: #85520b; }
+    .availability-dates { min-width: 190px; white-space: pre-line; }
     .status-line { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
     @media (max-width: 760px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .dashboard-bar { align-items: flex-start; flex-direction: column; } }
     @media (max-width: 420px) { .stats { gap: 8px; } .stat { padding: 13px; } .stat strong { font-size: 23px; } }

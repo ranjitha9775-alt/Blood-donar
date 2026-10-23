@@ -43,6 +43,10 @@ function renderAvailabilityDates() {
   document.getElementById("selectedDateControls").hidden = !useSelectedDates;
   document.getElementById("availabilityExpiryField").hidden = useSelectedDates;
   if (!container) return;
+  const dateInput = document.getElementById("availabilityDate");
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  dateInput.min = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
   if (!selectedAvailabilityDates.length) {
     container.replaceChildren(makeTextElement("p", "No future dates saved.", "muted"));
     return;
@@ -124,7 +128,8 @@ async function saveDonorAvailability(status) {
     document.getElementById("notAvailable")
   ];
   const message = document.getElementById("availabilityMessage");
-  buttons.forEach(button => { button.disabled = true; });
+  buttons.push(document.getElementById("saveAvailabilityDates"));
+  buttons.forEach(button => { if (button) button.disabled = true; });
   message.textContent = "Saving your availability…";
   const mode = status === "not_available"
     ? "unavailable"
@@ -132,7 +137,7 @@ async function saveDonorAvailability(status) {
   if (mode === "selected_dates" &&
       !selectedAvailabilityDates.some(item => item.status === "available")) {
     message.textContent = "Add at least one future date marked Available before confirming selected-date availability.";
-    buttons.forEach(button => { button.disabled = false; });
+    buttons.forEach(button => { if (button) button.disabled = false; });
     return;
   }
   try {
@@ -164,7 +169,7 @@ async function saveDonorAvailability(status) {
     console.error("Donor availability could not be saved:", error);
     message.textContent = error.message;
   } finally {
-    buttons.forEach(button => { button.disabled = false; });
+    buttons.forEach(button => { if (button) button.disabled = false; });
   }
 }
 
@@ -649,8 +654,12 @@ document.getElementById("addAvailabilityDate")?.addEventListener("click", () => 
   selectedAvailabilityDates.push({ date, status: "available" });
   input.value = "";
   document.getElementById("availabilityMessage").textContent =
-    "Date added locally. Select Available to Donate to save your selected dates.";
+    "Date added. Save your selected dates to update your availability.";
   renderAvailabilityDates();
+});
+
+document.getElementById("saveAvailabilityDates")?.addEventListener("click", () => {
+  saveDonorAvailability("available");
 });
 
 loadDashboard();

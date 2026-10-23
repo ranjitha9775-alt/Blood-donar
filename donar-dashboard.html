@@ -81,14 +81,15 @@
         </div>
         <div id="selectedDateControls" hidden>
           <div class="field">
-            <label for="availabilityDate">Add a future available date</label>
+            <label for="availabilityDate">Choose a date you can donate</label>
             <div class="choice-list">
               <input id="availabilityDate" type="date">
               <button id="addAvailabilityDate" class="button-secondary" type="button">Add date</button>
             </div>
           </div>
           <div id="availabilityDateList" aria-live="polite"></div>
-          <p class="muted">Each selected date is saved separately. A date does not mean you are available on other dates.</p>
+          <button id="saveAvailabilityDates" type="button">Save selected dates</button>
+          <p class="muted">Add or update your future dates, then save. Each selected date is saved separately; a date does not mean you are available on other dates. Saved dates appear in the Admin Dashboard.</p>
         </div>
         <label class="consent"><input id="publicContactConsent" type="checkbox"><span>Optional: allow my blood group and city-level availability to appear in patient search while my confirmation is current.</span></label>
         <label class="consent"><input id="publicIdentityConsent" type="checkbox"><span>Optional: show my registered name and area/locality in matching results. My phone number, email, and exact address stay hidden unless I accept a specific request and separately consent to share contact details.</span></label>

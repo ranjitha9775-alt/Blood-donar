@@ -2038,7 +2038,8 @@ app.get('/api/admin/dashboard', requireDatabase, requireAdminConfigured, require
                    CONCAT(DATE_FORMAT(ad.available_date, '%Y-%m-%d'), ': ', ad.status)
                    ORDER BY ad.available_date SEPARATOR ', ')
                  FROM donor_availability_dates ad
-                 WHERE ad.donor_user_id = d.user_id) AS availability_dates,
+                 WHERE ad.donor_user_id = d.user_id
+                   AND ad.available_date >= UTC_DATE()) AS availability_dates,
                 DATE_FORMAT(d.last_confirmed_at, '%Y-%m-%dT%H:%i:%sZ') AS last_confirmed_at,
                 COALESCE(DATE_FORMAT(d.availability_expires_at, '%Y-%m-%dT%H:%i:%sZ'),
                          DATE_FORMAT(d.available_until, '%Y-%m-%dT%H:%i:%sZ')) AS available_until

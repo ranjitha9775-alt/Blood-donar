@@ -83,7 +83,7 @@
     return "Unconfirmed";
   }
 
-  function addRow(tbody, values, emptyMessage) {
+  function addRow(tbody, values, emptyMessage, cellClasses = []) {
     if (values.length === 0) {
       const row = document.createElement("tr");
       const cell = document.createElement("td");
@@ -95,9 +95,13 @@
     }
     const rows = values.map(valuesForRow => {
       const row = document.createElement("tr");
-      valuesForRow.forEach(value => {
+      valuesForRow.forEach((value, index) => {
         const cell = document.createElement("td");
         cell.textContent = value === null || value === undefined || value === "" ? "—" : String(value);
+        const className = typeof cellClasses[index] === "function"
+          ? cellClasses[index](valuesForRow)
+          : cellClasses[index];
+        if (className) cell.className = className;
         row.append(cell);
       });
       return row;
@@ -127,21 +131,41 @@
     const emptyMessage = donors.length === 0
       ? "No donor accounts are registered."
       : "No donors match the selected filters.";
-    addRow(document.getElementById("donorRows"), filtered.map(donor => [
-      donor.full_name,
-      donor.username || "Legacy account",
-      donor.phone,
-      donor.blood_group,
-      donor.city,
-      donor.place,
-      availabilityLabel(getDonorAvailabilityStatus(donor)),
-      formatDate(donor.available_until),
-      formatDate(donor.last_confirmed_at),
-      donor.email,
-      donor.last_donation_date,
-      formatDate(donor.registered_at),
-      donor.availability_dates || "—"
-    ]), emptyMessage);
+    addRow(document.getElementById("donorRows"), filtered.map(donor => {
+      const status = getDonorAvailabilityStatus(donor);
+      const formattedDates = donor.availability_dates
+        ? donor.availability_dates
+          .replace(/, /g, "\n")
+          .replace(/: available\b/g, ": Available")
+          .replace(/: unavailable\b/g, ": Not available")
+        : "—";
+      return [
+        donor.full_name,
+        donor.username || "Legacy account",
+        donor.phone,
+        donor.blood_group,
+        donor.city,
+        donor.place,
+        availabilityLabel(status),
+        formatDate(donor.available_until),
+        formatDate(donor.last_confirmed_at),
+        donor.email,
+        donor.last_donation_date,
+        formatDate(donor.registered_at),
+        formattedDates
+      ];
+    }), emptyMessage, [
+      "", "", "", "", "", "",
+      values => {
+        const donor = filtered.find(item =>
+          item.full_name === values[0] &&
+          (item.username || "Legacy account") === values[1]
+        );
+        const status = getDonorAvailabilityStatus(donor || {});
+        return `availability-badge ${status === "unavailable" ? "not-available" : status}`;
+      },
+      "", "", "", "", "", "availability-dates"
+    ]);
   }
 
   function renderPatients() {
