@@ -256,6 +256,10 @@
     if (!document.hidden) refreshDashboard();
   });
 
+  window.addEventListener("storage", event => {
+    if (event.key === "lifedrop-availability-updated") refreshDashboard();
+  });
+
   requestJson("/api/admin/session")
     .then(() => {
       setSignedIn(true);

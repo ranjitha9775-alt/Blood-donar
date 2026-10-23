@@ -1646,7 +1646,7 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
     const availableUntil = isAvailable
       ? new Date(Math.ceil(Date.now() / 1000) * 1000 + expiresInHours * 60 * 60 * 1000)
       : null;
-    const [result] = await db.execute(
+    await db.execute(
       `UPDATE donors
        SET availability_status = ?, available = ?, public_contact_consent = ?,
            emergency_response_consent = ?, availability_expires_at = ?,
@@ -1655,23 +1655,28 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
       [status, isAvailable ? 1 : 0, isAvailable && publicContactConsent ? 1 : 0,
         isAvailable && emergencyResponseConsent ? 1 : 0, availableUntil, req.user.user_id]
     );
-    if (!result.affectedRows) {
-      const [donors] = await db.execute(
-        'SELECT id FROM donors WHERE user_id = ? LIMIT 1',
-        [req.user.user_id]
-      );
-      if (!donors.length) {
-        return res.status(404).json({ message: 'No donor profile is linked to this account.' });
-      }
+    const [donors] = await db.execute(
+      `SELECT availability_status, available, public_contact_consent,
+              emergency_response_consent,
+              DATE_FORMAT(availability_expires_at, '%Y-%m-%dT%H:%i:%sZ') AS available_until,
+              DATE_FORMAT(last_confirmed_at, '%Y-%m-%dT%H:%i:%sZ') AS last_confirmed_at
+       FROM donors
+       WHERE user_id = ?
+       LIMIT 1`,
+      [req.user.user_id]
+    );
+    if (!donors.length) {
+      return res.status(404).json({ message: 'No donor profile is linked to this account.' });
     }
+    const updatedDonor = donors[0];
     res.json({
       status: isAvailable ? 'Available' : 'Not Available',
-      availability_status: status,
-      is_available: isAvailable,
-      available_until: availableUntil?.toISOString() || null,
-      last_confirmed_at: new Date().toISOString(),
-      public_contact_consent: isAvailable && publicContactConsent,
-      emergency_response_consent: isAvailable && emergencyResponseConsent
+      availability_status: updatedDonor.availability_status,
+      is_available: updatedDonor.available === 1,
+      available_until: updatedDonor.available_until,
+      last_confirmed_at: updatedDonor.last_confirmed_at,
+      public_contact_consent: updatedDonor.public_contact_consent === 1,
+      emergency_response_consent: updatedDonor.emergency_response_consent === 1
     });
   } catch (error) {
     console.error('Donor availability status update failed:', error.code || error.message);

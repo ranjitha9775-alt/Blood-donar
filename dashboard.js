@@ -48,9 +48,14 @@ async function loadDonorAvailability() {
     }`;
     document.getElementById("lastConfirmedAt").textContent =
       formatDashboardDate(data.last_confirmed_at);
-    document.querySelectorAll('input[name="status"]').forEach(option => {
-      option.checked = option.value === data.availability_status;
-    });
+    document.getElementById("availableToDonate").setAttribute(
+      "aria-pressed",
+      String(data.status === "Available")
+    );
+    document.getElementById("notAvailable").setAttribute(
+      "aria-pressed",
+      String(data.status === "Not Available")
+    );
     document.getElementById("publicContactConsent").checked = data.public_contact_consent;
     document.getElementById("emergencyResponseConsent").checked = data.emergency_response_consent;
     message.textContent = data.available_until
@@ -61,6 +66,42 @@ async function loadDonorAvailability() {
   } catch (error) {
     console.error("Donor availability could not be loaded:", error);
     message.textContent = error.message;
+  }
+}
+
+async function saveDonorAvailability(status) {
+  const buttons = [
+    document.getElementById("availableToDonate"),
+    document.getElementById("notAvailable")
+  ];
+  const message = document.getElementById("availabilityMessage");
+  buttons.forEach(button => { button.disabled = true; });
+  message.textContent = "Saving your availability…";
+  try {
+    const result = await requestJson("/api/availability/status", {
+      method: "POST",
+      body: JSON.stringify({
+        status,
+        public_contact_consent: document.getElementById("publicContactConsent").checked,
+        emergency_response_consent: document.getElementById("emergencyResponseConsent").checked,
+        expires_in_hours: Number(document.getElementById("availabilityExpiry").value)
+      })
+    });
+    await loadDonorAvailability();
+    await loadDonorEmergencyRequests();
+    try {
+      localStorage.setItem("lifedrop-availability-updated", String(Date.now()));
+    } catch (error) {
+      console.warn("Could not signal the open admin dashboard to refresh:", error);
+    }
+    message.textContent = result.status === "Available"
+      ? `Your availability was saved until ${formatDashboardDate(result.available_until)}.`
+      : "Your status was saved as Not Available.";
+  } catch (error) {
+    console.error("Donor availability could not be saved:", error);
+    message.textContent = error.message;
+  } finally {
+    buttons.forEach(button => { button.disabled = false; });
   }
 }
 
@@ -430,42 +471,12 @@ document.getElementById("logout-button").addEventListener("click", async () => {
   }
 });
 
-const availabilityForm = document.getElementById("availabilityForm");
-if (availabilityForm) {
-  availabilityForm.addEventListener("submit", async event => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const button = document.getElementById("confirmAvailability");
-    const message = document.getElementById("availabilityMessage");
-    const status = new FormData(form).get("status");
-    if (!status) {
-      message.textContent = "Choose Available to Donate or Not Available.";
-      return;
-    }
-    button.disabled = true;
-    message.textContent = "Saving your confirmation…";
-    try {
-      const result = await requestJson("/api/availability/status", {
-        method: "POST",
-        body: JSON.stringify({
-          status,
-          public_contact_consent: document.getElementById("publicContactConsent").checked,
-          emergency_response_consent: document.getElementById("emergencyResponseConsent").checked,
-          expires_in_hours: Number(document.getElementById("availabilityExpiry").value)
-        })
-      });
-      await loadDonorAvailability();
-      await loadDonorEmergencyRequests();
-      message.textContent = result.status === "Available"
-        ? `Your confirmation was saved until ${formatDashboardDate(result.available_until)}.`
-        : "Your status was saved as Not Available.";
-    } catch (error) {
-      console.error("Donor availability could not be saved:", error);
-      message.textContent = error.message;
-    } finally {
-      button.disabled = false;
-    }
-  });
-}
+document.getElementById("availableToDonate")?.addEventListener("click", () => {
+  saveDonorAvailability("available");
+});
+
+document.getElementById("notAvailable")?.addEventListener("click", () => {
+  saveDonorAvailability("not_available");
+});
 
 loadDashboard();

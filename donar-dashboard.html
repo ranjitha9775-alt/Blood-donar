@@ -26,10 +26,10 @@
     .status-label.not-available { color: #a51f32; background: #fde8eb; }
     .status-label.needs-confirmation { color: #765400; background: #fff2cc; }
     .choice-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
-    .choice { display: flex; align-items: center; gap: 10px; min-height: 55px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; font-weight: 700; }
-    .choice input { width: 18px; height: 18px; accent-color: var(--green); }
-    .choice.available { color: var(--green); }
-    .choice.not-available { color: #a51f32; }
+    .choice { min-height: 55px; border: 1px solid var(--line); background: #fff; }
+    .choice.available { color: var(--green); border-color: #b8dfc7; }
+    .choice.not-available { color: #a51f32; border-color: #f0c0c7; }
+    .choice[aria-pressed="true"] { box-shadow: 0 0 0 2px currentColor; }
     .consent { display: flex; align-items: flex-start; gap: 10px; margin: 14px 0; color: #474d58; font-size: 13px; }
     .consent input { flex: 0 0 18px; width: 18px; height: 18px; margin-top: 2px; accent-color: var(--red); }
     button { min-height: 44px; padding: 0 16px; border: 0; border-radius: 9px; background: var(--red); color: #fff; font: inherit; font-weight: 750; cursor: pointer; }
@@ -61,26 +61,22 @@
     <p class="muted" id="welcome">Checking your login…</p>
 
     <section class="card" id="availabilityCard" aria-labelledby="availabilityTitle" hidden>
-      <h2 id="availabilityTitle">Donor Availability Confirmation</h2>
+      <h2 id="availabilityTitle">My Donation Availability</h2>
       <p class="muted">Confirm for up to 24 hours. Unknown or expired confirmations are shown as Unconfirmed and are not matched.</p>
       <div class="status-panel">
         <div><strong>Current status</strong><br><span class="status-label" id="availabilityStatus">Loading…</span></div>
         <div><strong>Last confirmed</strong><br><time class="muted" id="lastConfirmedAt">Not confirmed yet</time></div>
       </div>
-      <form id="availabilityForm">
-        <fieldset style="border:0;padding:0;margin:0">
-          <legend><strong>Select your status</strong></legend>
-          <div class="choice-list">
-            <label class="choice available"><input type="radio" name="status" value="available" required> Available to Donate</label>
-            <label class="choice not-available"><input type="radio" name="status" value="not_available" required> Not Available</label>
-          </div>
-        </fieldset>
+      <div class="choice-list" aria-label="Set donation availability">
+        <button id="availableToDonate" class="choice available" type="button" aria-pressed="false">Available to donate</button>
+        <button id="notAvailable" class="choice not-available" type="button" aria-pressed="false">Not available</button>
+      </div>
+      <div>
         <label class="consent"><input id="publicContactConsent" type="checkbox"><span>Optional: allow my blood group and city-level availability to appear in patient search while my confirmation is current. Search results use a privacy-safe donor label and never show my name, phone, email, or exact area.</span></label>
         <label class="consent"><input id="emergencyResponseConsent" type="checkbox"><span>Optional: allow my current availability status and last-confirmed time to be shown for matching urgent requests in my city and blood group. I may choose whether to respond to each request.</span></label>
         <div class="field"><label for="availabilityExpiry">Availability confirmation duration</label><select id="availabilityExpiry"><option value="4">4 hours</option><option value="12">12 hours</option><option value="24" selected>24 hours</option></select></div>
-        <button id="confirmAvailability" type="submit">Confirm My Availability</button>
         <p class="message" id="availabilityMessage" aria-live="polite"></p>
-      </form>
+      </div>
     </section>
 
     <section class="card" id="emergencyRequestsCard" aria-labelledby="emergencyRequestsTitle" hidden>
