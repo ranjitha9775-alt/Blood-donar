@@ -711,6 +711,7 @@ async function initializeDatabase() {
       last_donation_date DATE NULL,
       available TINYINT(1) NOT NULL DEFAULT 0,
       public_contact_consent TINYINT(1) NOT NULL DEFAULT 0,
+      public_identity_consent TINYINT(1) NOT NULL DEFAULT 0,
       availability_expires_at DATETIME NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (id)
@@ -724,6 +725,7 @@ async function initializeDatabase() {
     ['available', 'ALTER TABLE donors ADD COLUMN available TINYINT(1) NOT NULL DEFAULT 0 AFTER last_donation_date'],
     ['is_available', 'ALTER TABLE donors ADD COLUMN is_available TINYINT(1) NOT NULL DEFAULT 0 AFTER available'],
     ['public_contact_consent', 'ALTER TABLE donors ADD COLUMN public_contact_consent TINYINT(1) NOT NULL DEFAULT 0 AFTER available'],
+    ['public_identity_consent', 'ALTER TABLE donors ADD COLUMN public_identity_consent TINYINT(1) NOT NULL DEFAULT 0 AFTER public_contact_consent'],
     ['availability_expires_at', 'ALTER TABLE donors ADD COLUMN availability_expires_at DATETIME NULL AFTER public_contact_consent'],
     ['available_until', 'ALTER TABLE donors ADD COLUMN available_until DATETIME NULL AFTER availability_expires_at'],
     ['availability_mode', "ALTER TABLE donors ADD COLUMN availability_mode ENUM('selected_dates', 'general', 'unavailable') NOT NULL DEFAULT 'general' AFTER availability_expires_at"],
@@ -2149,6 +2151,7 @@ app.get('/api/availability/status', requireDatabase, requireSession, async (req,
   try {
     const [donors] = await db.execute(
       `SELECT availability_status, availability_mode, available, public_contact_consent,
+              public_identity_consent,
               emergency_response_consent,
               availability_expires_at > UTC_TIMESTAMP() AS confirmation_current,
               COALESCE(DATE_FORMAT(availability_expires_at, '%Y-%m-%dT%H:%i:%sZ'),
@@ -2203,6 +2206,7 @@ app.get('/api/availability/status', requireDatabase, requireSession, async (req,
       last_confirmed_at: donors[0].last_confirmed_at,
       selected_dates: dates,
       public_contact_consent: donors[0].public_contact_consent === 1,
+      public_identity_consent: donors[0].public_identity_consent === 1,
       emergency_response_consent: donors[0].emergency_response_consent === 1
     });
   } catch (error) {
@@ -2216,6 +2220,7 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
     return res.status(403).json({ message: 'Only donor accounts can manage donor availability.' });
   }
   const { status: submittedStatus, public_contact_consent: publicContactConsent,
+    public_identity_consent: publicIdentityConsent,
     emergency_response_consent: emergencyResponseConsent,
     expires_in_hours: expiresInHours = AVAILABILITY_HOURS,
     mode: submittedMode = 'general',
@@ -2235,6 +2240,7 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
   if (!status ||
       !mode ||
       typeof publicContactConsent !== 'boolean' ||
+      (publicIdentityConsent !== undefined && typeof publicIdentityConsent !== 'boolean') ||
       typeof emergencyResponseConsent !== 'boolean' ||
       !AVAILABILITY_DURATIONS_HOURS.includes(expiresInHours) ||
       !Array.isArray(selectedDates) ||
@@ -2272,12 +2278,16 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
       await connection.execute(
       `UPDATE donors
        SET availability_status = ?, availability_mode = ?, available = ?, is_available = ?,
-           public_contact_consent = ?, emergency_response_consent = ?,
+           public_contact_consent = ?,
+           public_identity_consent = CASE WHEN ? IS NULL THEN public_identity_consent ELSE ? END,
+           emergency_response_consent = ?,
            availability_expires_at = ?, available_until = ?,
            last_confirmed_at = UTC_TIMESTAMP()
        WHERE user_id = ?`,
         [status, mode, isAvailable ? 1 : 0, isAvailable ? 1 : 0,
           isAvailable && publicContactConsent ? 1 : 0,
+          publicIdentityConsent === undefined ? null : 1,
+          isAvailable && publicContactConsent && publicIdentityConsent ? 1 : 0,
           isAvailable && emergencyResponseConsent ? 1 : 0,
           availableUntil, availableUntil, req.user.user_id]
       );
@@ -2342,6 +2352,7 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
       }
       const [donors] = await connection.execute(
       `SELECT availability_status, available, public_contact_consent,
+              public_identity_consent,
               emergency_response_consent, availability_mode,
               DATE_FORMAT(availability_expires_at, '%Y-%m-%dT%H:%i:%sZ') AS available_until,
               DATE_FORMAT(last_confirmed_at, '%Y-%m-%dT%H:%i:%sZ') AS last_confirmed_at
@@ -2378,6 +2389,7 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
       last_confirmed_at: updatedDonor.last_confirmed_at,
       selected_dates: dates,
       public_contact_consent: updatedDonor.public_contact_consent === 1,
+      public_identity_consent: updatedDonor.public_identity_consent === 1,
       emergency_response_consent: updatedDonor.emergency_response_consent === 1
     });
   } catch (error) {
@@ -2574,9 +2586,13 @@ app.get('/api/donors/search', requireDatabase, requireSession, rateLimit(30, 60 
          )`
       : `COALESCE(d.availability_mode, 'general') = 'general'
          AND d.availability_expires_at > UTC_TIMESTAMP()`;
-    const areaFilter = area ? 'AND LOWER(d.place) = LOWER(?)' : '';
+    const areaFilter = area
+      ? "AND LOWER(COALESCE(NULLIF(d.place, ''), NULLIF(u.place, ''), '')) = LOWER(?)"
+      : '';
     const [donors] = await db.execute(
-      `SELECT 'Registered donor' AS display_name, d.blood_group, d.city, d.state,
+      `SELECT u.full_name AS display_name,
+              COALESCE(NULLIF(d.place, ''), NULLIF(u.place, '')) AS place,
+              d.blood_group, d.city, d.state,
               d.emergency_response_consent = 1 AS emergency_matching_enabled,
               CASE WHEN COALESCE(d.availability_mode, 'general') = 'selected_dates'
                 THEN 'Available on selected date' ELSE 'Available' END AS availability_status,
@@ -2589,6 +2605,7 @@ app.get('/api/donors/search', requireDatabase, requireSession, rateLimit(30, 60 
        JOIN users u ON u.user_id = d.user_id AND u.role = 'donor'
        WHERE d.available = 1
          AND d.public_contact_consent = 1
+         AND d.public_identity_consent = 1
          AND d.last_confirmed_at IS NOT NULL
          AND d.blood_group = ?
          AND ${locationFilter}

@@ -97,6 +97,7 @@ async function loadDonorAvailability() {
       String(data.status === "Not Available")
     );
     document.getElementById("publicContactConsent").checked = data.public_contact_consent;
+    document.getElementById("publicIdentityConsent").checked = data.public_identity_consent;
     document.getElementById("emergencyResponseConsent").checked = data.emergency_response_consent;
     document.getElementById("availabilityMode").value =
       data.availability_mode === "selected_dates" ? "selected_dates" : "general";
@@ -140,6 +141,7 @@ async function saveDonorAvailability(status) {
       body: JSON.stringify({
         status,
         public_contact_consent: document.getElementById("publicContactConsent").checked,
+        public_identity_consent: document.getElementById("publicIdentityConsent").checked,
         emergency_response_consent: document.getElementById("emergencyResponseConsent").checked,
         expires_in_hours: Number(document.getElementById("availabilityExpiry").value),
         mode,
@@ -454,13 +456,14 @@ async function searchPatientDonors(event) {
     }
     message.textContent =
       `${data.donors.length} currently confirmed match(es) · Checked ${formatDashboardDate(data.checked_at)}. ${data.location_precision}`;
-    const cards = data.donors.map((donor, index) => {
+    const cards = data.donors.map(donor => {
       const card = document.createElement("article");
       card.className = "search-result";
       card.append(
-        makeTextElement("strong", `${donor.display_name} match ${index + 1} · ${donor.blood_group}`),
-        makeTextElement("p", `${donor.city}, ${donor.state} · ${donor.availability_status}`),
+        makeTextElement("strong", `${donor.display_name} · ${donor.blood_group}`),
+        makeTextElement("p", `${donor.place ? `${donor.place}, ` : ""}${donor.city}, ${donor.state} · ${donor.availability_status}`),
         makeTextElement("p", "Approximate city-level location; no distance is calculated because the search origin has no reliable coordinates."),
+        makeTextElement("p", "Phone number is shown only if this donor accepts your request and separately consents to share contact details."),
         makeTextElement("p", `Last confirmed: ${formatDashboardDate(donor.last_confirmed_at)} · ${
           donor.availability_mode === "selected_dates"
             ? `Available on ${donor.matched_date || requiredDate}.`
