@@ -7,6 +7,7 @@
   const searchMessage = document.getElementById("searchMessage");
   const searchResults = document.getElementById("searchResults");
   let emergencyResponseConsent = false;
+  let isSearchingDonors = false;
   const registrationComplete = new URLSearchParams(window.location.search).get("registered") === "1";
   const requestedReturn = new URLSearchParams(window.location.search).get("next");
   let returnUrl = null;
@@ -118,9 +119,11 @@
   });
 
   async function searchAvailableDonors() {
+    if (isSearchingDonors) return;
     const form = document.getElementById("availabilityForm");
     if (!form.reportValidity()) return;
 
+    isSearchingDonors = true;
     const params = new URLSearchParams({
       city: form.elements.city.value.trim(),
       state: form.elements.state.value.trim()
@@ -130,13 +133,18 @@
     searchMessage.textContent = "";
     try {
       const data = await requestJson(`/api/availability?${params}`);
+      const checkedAt = new Date(data.checked_at);
+      const checkedLabel = Number.isNaN(checkedAt.getTime())
+        ? "time unavailable"
+        : checkedAt.toLocaleTimeString();
       if (!data.donors.length) {
-        searchResults.innerHTML = '<div class="empty">No opted-in donors are currently available in this city and state. Try another nearby city or check again later.</div>';
+        searchResults.innerHTML =
+          `<p class="help">Checked ${escapeHtml(checkedLabel)} · Updates every 15 seconds while this page is open.</p>` +
+          '<div class="empty">No opted-in donors are currently available in this city and state. Try another nearby city or check again later.</div>';
         return;
       }
-      const checkedAt = new Date(data.checked_at);
       searchResults.innerHTML =
-        `<p class="help">${data.donors.length} available donor${data.donors.length === 1 ? "" : "s"} · Checked ${escapeHtml(checkedAt.toLocaleTimeString())}</p>` +
+        `<p class="help">${data.donors.length} available donor${data.donors.length === 1 ? "" : "s"} · Checked ${escapeHtml(checkedLabel)} · Updates every 15 seconds while this page is open.</p>` +
         data.donors.map(donor => {
           const availableUntil = new Date(donor.available_until);
           const phoneHref = donor.phone.replace(/[^\d+]/g, "");
@@ -152,6 +160,8 @@
       searchResults.textContent = "";
       searchMessage.textContent = error.message;
       if (error.message.toLowerCase().includes("log in")) showLogin(error.message);
+    } finally {
+      isSearchingDonors = false;
     }
   }
 
@@ -199,6 +209,13 @@
       console.error("Logout failed:", error);
       searchMessage.textContent = error.message;
     }
+  });
+
+  window.setInterval(() => {
+    if (!availabilityPanel.hidden && !document.hidden) searchAvailableDonors();
+  }, 15000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && !availabilityPanel.hidden) searchAvailableDonors();
   });
 
   requestJson("/api/me")

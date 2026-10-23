@@ -81,6 +81,7 @@
       donor.city,
       donor.place,
       donor.availability_status,
+      donor.availability_status === "Available" ? formatDate(donor.available_until) : "—",
       formatDate(donor.last_confirmed_at),
       donor.email,
       donor.last_donation_date,
@@ -156,12 +157,14 @@
     dashboardData = data;
     document.getElementById("totalRegistrations").textContent = data.counts.total_registrations;
     document.getElementById("donorCount").textContent = data.counts.donor_count;
+    document.getElementById("availableDonorCount").textContent =
+      data.donors.filter(donor => donor.availability_status === "Available").length;
     document.getElementById("patientCount").textContent = data.counts.patient_count;
     document.getElementById("requestCount").textContent = data.counts.patient_request_count;
     renderDonors();
     renderPatients();
     renderRequests(data);
-    refreshStatus.textContent = `Last updated ${formatDate(data.refreshed_at)}. This dashboard checks for new registrations every 15 seconds.`;
+    refreshStatus.textContent = `Last updated ${formatDate(data.refreshed_at)}. Live donor availability and dashboard data refresh every 15 seconds.`;
   }
 
   async function refreshDashboard() {

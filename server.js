@@ -677,8 +677,7 @@ app.post('/api/blood-requests', rateLimit(5, 15 * 60 * 1000), requireDatabase, r
          SELECT ?, d.user_id, 'pending', UTC_TIMESTAMP(), ?
          FROM donors d
          JOIN users matched_user ON matched_user.user_id = d.user_id AND matched_user.role = 'donor'
-         WHERE d.availability_status = 'available'
-           AND d.available = 1
+         WHERE d.available = 1
            AND d.emergency_response_consent = 1
            AND d.availability_expires_at > UTC_TIMESTAMP()
            AND d.blood_group = ?
@@ -728,12 +727,11 @@ app.get(['/api/donor/notifications', '/api/donor/emergency-requests'],
                    WHEN dr.response = 'can_help' THEN 'I Can Help'
                    ELSE 'I Cannot Help' END AS response_status,
               CASE
-                WHEN d.availability_status = 'not_available' THEN 'Not Available'
                 WHEN d.available = 1 AND d.availability_expires_at > UTC_TIMESTAMP() THEN 'Available'
+                WHEN d.available = 0 OR d.availability_status = 'not_available' THEN 'Not Available'
                 ELSE 'Needs Confirmation'
               END AS donor_availability_status,
-              CASE WHEN d.availability_status = 'available'
-                         AND d.available = 1
+              CASE WHEN d.available = 1
                          AND d.emergency_response_consent = 1
                          AND d.availability_expires_at > UTC_TIMESTAMP()
                    THEN 1 ELSE 0 END AS can_offer_help,
@@ -814,8 +812,7 @@ app.post('/api/donor/emergency-requests/:requestId/response', requireDatabase, r
            AND dr.response_deadline > UTC_TIMESTAMP()
            AND r.status NOT IN ('Fulfilled', 'Cancelled')
            AND (? = 'cannot_help' OR (
-             d.availability_status = 'available'
-             AND d.available = 1
+             d.available = 1
              AND d.emergency_response_consent = 1
              AND d.availability_expires_at > UTC_TIMESTAMP()
            ))`,
@@ -842,8 +839,7 @@ app.post('/api/donor/emergency-requests/:requestId/response', requireDatabase, r
           return res.status(409).json({ message: 'The response period has ended.' });
         }
         if (response === 'can_help' &&
-            (matches[0].availability_status !== 'available' ||
-             matches[0].available !== 1 ||
+            (matches[0].available !== 1 ||
              matches[0].emergency_response_consent !== 1 ||
              matches[0].confirmation_current !== 1)) {
           return res.status(409).json({ message: 'Confirm current availability and keep emergency matching enabled before responding Available.' });
@@ -879,8 +875,8 @@ app.get('/api/my-emergency-responses', requireDatabase, requireSession, async (r
                    ELSE 'Donor Cannot Help' END AS response_status,
               CASE
                 WHEN dr.donor_user_id IS NULL OR d.emergency_response_consent = 0 THEN NULL
-                WHEN d.availability_status = 'not_available' THEN 'Not Available'
                 WHEN d.available = 1 AND d.availability_expires_at > UTC_TIMESTAMP() THEN 'Available'
+                WHEN d.available = 0 OR d.availability_status = 'not_available' THEN 'Not Available'
                 ELSE 'Needs Confirmation'
               END AS donor_availability_status,
               CASE WHEN d.emergency_response_consent = 1
@@ -1469,11 +1465,16 @@ app.get('/api/admin/dashboard', requireDatabase, requireAdminConfigured, require
                 DATE_FORMAT(u.created_at, '%Y-%m-%dT%H:%i:%sZ') AS registered_at,
                 d.last_donation_date,
                 CASE
-                  WHEN d.user_id IS NULL OR d.availability_status = 'not_available' THEN 'Not Available'
                   WHEN d.available = 1 AND d.availability_expires_at > UTC_TIMESTAMP() THEN 'Available'
+                  WHEN d.user_id IS NULL OR d.available = 0 OR d.availability_status = 'not_available' THEN 'Not Available'
                   ELSE 'Needs Confirmation'
                 END AS availability_status,
-                DATE_FORMAT(d.last_confirmed_at, '%Y-%m-%dT%H:%i:%sZ') AS last_confirmed_at
+                DATE_FORMAT(d.last_confirmed_at, '%Y-%m-%dT%H:%i:%sZ') AS last_confirmed_at,
+                CASE
+                  WHEN d.available = 1 AND d.availability_expires_at > UTC_TIMESTAMP()
+                  THEN DATE_FORMAT(d.availability_expires_at, '%Y-%m-%dT%H:%i:%sZ')
+                  ELSE NULL
+                END AS available_until
          FROM users u
          LEFT JOIN donors d ON d.user_id = u.user_id
          WHERE u.role = 'donor'
@@ -1566,6 +1567,7 @@ app.get('/api/availability/status', requireDatabase, requireSession, async (req,
     const [donors] = await db.execute(
       `SELECT availability_status, available, public_contact_consent,
               emergency_response_consent,
+              availability_expires_at > UTC_TIMESTAMP() AS confirmation_current,
               DATE_FORMAT(availability_expires_at, '%Y-%m-%dT%H:%i:%sZ') AS available_until,
               DATE_FORMAT(last_confirmed_at, '%Y-%m-%dT%H:%i:%sZ') AS last_confirmed_at
        FROM donors
@@ -1576,10 +1578,7 @@ app.get('/api/availability/status', requireDatabase, requireSession, async (req,
     if (!donors.length) {
       return res.status(404).json({ message: 'No donor profile is linked to this account.' });
     }
-    const active = donors[0].availability_status === 'available' &&
-      donors[0].available === 1 &&
-      donors[0].available_until &&
-      new Date(donors[0].available_until).getTime() > Date.now();
+    const active = donors[0].available === 1 && donors[0].confirmation_current === 1;
     const status = active
       ? 'Available'
       : donors[0].availability_status === 'not_available'
@@ -1684,7 +1683,6 @@ app.get('/api/availability', requireDatabase, requireSession, rateLimit(30, 60 *
 
   try {
     const filters = [
-      "availability_status = 'available'",
       'available = 1',
       'public_contact_consent = 1',
       'availability_expires_at > UTC_TIMESTAMP()',
