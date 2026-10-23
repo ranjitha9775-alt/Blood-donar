@@ -430,33 +430,19 @@ async function searchPatientDonors(event) {
   results.replaceChildren();
   message.textContent = "Searching current donor confirmations…";
   const params = new URLSearchParams({
-    state: "Karnataka",
+    state: document.getElementById("searchState").value.trim(),
     city: document.getElementById("searchCity").value.trim(),
-    blood_group: document.getElementById("searchBloodGroup").value,
-    radius_km: document.getElementById("searchRadius").value,
-    units: document.getElementById("searchUnits").value,
-    emergency: String(document.getElementById("searchEmergency").checked)
+    blood_group: document.getElementById("searchBloodGroup").value
   });
-  const area = document.getElementById("searchArea").value.trim();
-  const requiredDate = document.getElementById("searchRequiredDate").value;
-  if (area) params.set("area", area);
-  if (requiredDate) params.set("required_date", requiredDate);
   try {
     const data = await requestJson(`/api/donors/search?${params}`);
     if (!data.donors.length) {
       message.textContent = "No currently confirmed donors found.";
       const empty = makeTextElement(
         "p",
-        "Try a wider Karnataka search or check reported blood-bank stock. Results include only donors with current availability who opted into both search and name/area display; their location is their saved profile city/area, not live GPS."
+        "Check the registered city and state spelling or search reported blood-bank stock. Only currently available donors who opted into patient search and name display appear."
       );
-      const widerSearch = makeTextElement("button", "Search wider area");
-      widerSearch.type = "button";
-      widerSearch.className = "button-secondary";
-      widerSearch.addEventListener("click", () => {
-        document.getElementById("searchRadius").value = "wider";
-        form.requestSubmit();
-      });
-      results.append(empty, widerSearch);
+      results.append(empty);
       return;
     }
     message.textContent =
@@ -466,23 +452,11 @@ async function searchPatientDonors(event) {
       card.className = "search-result";
       card.append(
         makeTextElement("strong", `${donor.display_name} · ${donor.blood_group}`),
-        makeTextElement("p", `Registered location: ${donor.place || "Area not provided"}, ${donor.city}, ${donor.state}`),
-        makeTextElement("p", `${donor.availability_status} · Search-area match is approximate; this is not live GPS and no distance is calculated.`),
+        makeTextElement("p", `Registered city/state: ${donor.city}, ${donor.state}`),
+        makeTextElement("p", `${donor.availability_status} · This is registered profile location, not live GPS.`),
         makeTextElement("p", "Phone number is shown only if this donor accepts your request and separately consents to share contact details."),
-        makeTextElement("p", `Last confirmed: ${formatDashboardDate(donor.last_confirmed_at)} · ${
-          donor.availability_mode === "selected_dates"
-            ? `Available on ${donor.matched_date || requiredDate}.`
-            : `Available until ${formatDashboardDate(donor.available_until)}.`
-        }`)
+        makeTextElement("p", `Last confirmed: ${formatDashboardDate(donor.last_confirmed_at)} · Available until ${formatDashboardDate(donor.available_until)}.`)
       );
-      if (document.getElementById("searchEmergency").checked) {
-        card.append(makeTextElement(
-          "p",
-          donor.emergency_matching_enabled
-            ? "This donor opted into in-app emergency matching."
-            : "This donor is not opted into emergency notifications."
-        ));
-      }
       const action = makeTextElement("button", "Request Help");
       action.type = "button";
       action.addEventListener("click", () => {
@@ -490,7 +464,7 @@ async function searchPatientDonors(event) {
         document.getElementById("requestBlood").value = donor.blood_group;
         document.getElementById("requestCity").value = donor.city;
         document.getElementById("requestDistrict").value = donor.city;
-        document.getElementById("requestUnits").value = document.getElementById("searchUnits").value;
+        document.getElementById("requestUnits").value = "1";
         document.getElementById("requestUrgency").value = "Urgent";
         document.getElementById("requestMatchDonors").checked = true;
         document.getElementById("patientRequestCard").scrollIntoView({ behavior: "smooth" });
@@ -594,6 +568,7 @@ async function loadDashboard() {
       window.setInterval(loadDonorEmergencyRequests, 30000);
     } else {
       document.getElementById("searchCity").value = user.city || "Mysuru";
+      document.getElementById("searchState").value = user.state || "Karnataka";
       document.getElementById("requestCity").value = user.city || "Mysuru";
       document.getElementById("requestDistrict").value = user.city || "Mysuru";
       const defaultNeededAt = new Date(Date.now() + 60 * 60 * 1000);
@@ -602,9 +577,6 @@ async function loadDashboard() {
       document.getElementById("requestBlood").value = document.getElementById("searchBloodGroup").value;
       document.getElementById("searchBloodGroup").addEventListener("change", event => {
         document.getElementById("requestBlood").value = event.currentTarget.value;
-      });
-      document.getElementById("searchUnits").addEventListener("input", event => {
-        document.getElementById("requestUnits").value = event.currentTarget.value;
       });
       document.getElementById("patientDonorSearchForm").addEventListener("submit", searchPatientDonors);
       document.getElementById("patientEmergencyRequestForm").addEventListener("submit", submitPatientEmergencyRequest);

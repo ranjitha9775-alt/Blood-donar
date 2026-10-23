@@ -76,11 +76,11 @@
     form.elements.state.value = user.state || "";
     donorAvailabilityForm.hidden = !isDonor;
     if (isDonor) loadDonorAvailability();
-    if (!isDonor && user.city && user.state) {
+    if (!isDonor && user.city && user.state && form.elements.blood_group.value) {
       searchAvailableDonors();
     } else if (!isDonor) {
-      searchMessage.textContent = "Add a city and state to your profile location to search for nearby donors.";
-      searchResults.textContent = "Enter a city and state to search.";
+      searchMessage.textContent = "Choose a blood group, city/place, and state to search for currently available donors.";
+      searchResults.textContent = "Select your search details to begin.";
     }
   }
 
@@ -162,7 +162,7 @@
           const availableUntil = new Date(donor.available_until);
           return `<article class="result-card">
             <h3>${escapeHtml(donor.name)} · ${escapeHtml(donor.blood_group)}</h3>
-            <p>Registered location: ${donor.place ? `${escapeHtml(donor.place)}, ` : "Area not provided, "}${escapeHtml(donor.city)}, ${escapeHtml(donor.state)}</p>
+            <p>Registered city/state: ${escapeHtml(donor.city)}, ${escapeHtml(donor.state)}</p>
             <p>Available until ${escapeHtml(availableUntil.toLocaleString())}</p>
             <p>Last confirmed ${escapeHtml(new Date(donor.last_confirmed_at).toLocaleString())}. Phone numbers are shared only after this donor accepts a specific request and consents to contact sharing.</p>
           </article>`;

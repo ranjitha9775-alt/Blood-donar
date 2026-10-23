@@ -103,12 +103,12 @@
         <p class="help"><a href="/donor-dashboard.html">Open Donor Portal</a> to save future availability dates and choose whether your registered name and area appear in Live Donor Search.</p>
       </form>
       <form class="search-grid" id="availabilityForm">
-        <div class="field"><label for="searchCity">City</label><input id="searchCity" name="city" type="search" required minlength="2" maxlength="80" placeholder="e.g. Bengaluru"></div>
-        <div class="field"><label for="searchState">State / union territory</label><input id="searchState" name="state" type="search" required maxlength="80" placeholder="e.g. Karnataka"></div>
+        <div class="field"><label for="searchCity">City / place</label><input id="searchCity" name="city" type="search" required minlength="2" maxlength="80" placeholder="e.g. Bengaluru"></div>
+        <div class="field"><label for="searchState">State</label><input id="searchState" name="state" type="search" required maxlength="80" placeholder="e.g. Karnataka"></div>
         <div class="field">
           <label for="searchGroup">Blood group</label>
-          <select id="searchGroup" name="blood_group">
-            <option value="">Any group</option><option>A+</option><option>A−</option><option>B+</option><option>B−</option><option>AB+</option><option>AB−</option><option>O+</option><option>O−</option>
+          <select id="searchGroup" name="blood_group" required>
+            <option value="">Choose blood group</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option>
           </select>
         </div>
         <button class="btn btn-primary" type="submit">Check availability</button>

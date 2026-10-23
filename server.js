@@ -2600,14 +2600,13 @@ app.get('/api/donors/search', requireDatabase, requireSession, rateLimit(30, 60 
   const today = new Date().toISOString().slice(0, 10);
   if (!isNonEmptyString(city, 80) ||
       !isNonEmptyString(state, 80) ||
-      state.toLowerCase() !== 'karnataka' ||
       !BLOOD_GROUPS.has(bloodGroup) ||
       !allowedRadii.has(radius) ||
       (area && !isNonEmptyString(area, 100)) ||
       (requiredDate && (!isValidDateOnly(requiredDate) || requiredDate < today)) ||
       (units !== null && (!Number.isInteger(units) || units < 1 || units > 20)) ||
       (req.query.emergency !== undefined && !['true', 'false'].includes(req.query.emergency))) {
-    return res.status(400).json({ message: 'Choose Karnataka, a city, valid blood group, search area and required units.' });
+    return res.status(400).json({ message: 'Choose a valid state, city/place, blood group, and optional search details.' });
   }
 
   try {
@@ -2664,11 +2663,11 @@ app.get('/api/donors/search', requireDatabase, requireSession, rateLimit(30, 60 
     res.json({
       donors,
       checked_at: new Date().toISOString(),
-      search_area: radius === 'wider' ? 'Karnataka (wider search)' : `${city}, ${state}`,
+      search_area: radius === 'wider' ? `${state} (wider search)` : `${city}, ${state}`,
       radius_km: radius === 'wider' ? null : Number(radius),
       required_date: requiredDate || null,
       area: area || null,
-      location_precision: 'Approximate city-level match; no reliable patient search-origin coordinates were provided for distance calculation.',
+      location_precision: 'Matches registered donor city/state; live GPS and calculated distance are not available.',
       distance_available: false,
       emergency_priority: emergency,
       units_requested: units
@@ -2693,9 +2692,9 @@ app.get('/api/availability', requireDatabase, requireSession, rateLimit(30, 60 *
     !isNonEmptyString(city, 80) ||
     city.length < 2 ||
     !isNonEmptyString(state, 80) ||
-    (bloodGroup && !BLOOD_GROUPS.has(bloodGroup))
+    !BLOOD_GROUPS.has(bloodGroup)
   ) {
-    return res.status(400).json({ message: 'Enter a city and state, and select a valid blood group.' });
+    return res.status(400).json({ message: 'Enter a city and state, and select a blood group.' });
   }
 
   try {
@@ -2710,10 +2709,8 @@ app.get('/api/availability', requireDatabase, requireSession, rateLimit(30, 60 *
       'LOWER(d.state) = LOWER(?)'
     ];
     const values = [city, state];
-    if (bloodGroup) {
-      filters.push('d.blood_group = ?');
-      values.push(bloodGroup);
-    }
+    filters.push('d.blood_group = ?');
+    values.push(bloodGroup);
     const [donors] = await db.execute(
       `SELECT u.full_name AS name, d.blood_group, d.city, d.state,
               COALESCE(NULLIF(d.place, ''), NULLIF(u.place, '')) AS place,
