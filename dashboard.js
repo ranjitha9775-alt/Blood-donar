@@ -447,7 +447,7 @@ async function searchPatientDonors(event) {
       message.textContent = "No currently confirmed donors found.";
       const empty = makeTextElement(
         "p",
-        "Try a wider Karnataka search or check reported blood-bank stock. Donor availability is self-reported and may change."
+        "Try a wider Karnataka search or check reported blood-bank stock. Results include only donors with current availability who opted into both search and name/area display; their location is their saved profile city/area, not live GPS."
       );
       const widerSearch = makeTextElement("button", "Search wider area");
       widerSearch.type = "button";
@@ -466,8 +466,8 @@ async function searchPatientDonors(event) {
       card.className = "search-result";
       card.append(
         makeTextElement("strong", `${donor.display_name} · ${donor.blood_group}`),
-        makeTextElement("p", `${donor.place ? `${donor.place}, ` : ""}${donor.city}, ${donor.state} · ${donor.availability_status}`),
-        makeTextElement("p", "Approximate city-level location; no distance is calculated because the search origin has no reliable coordinates."),
+        makeTextElement("p", `Registered location: ${donor.place || "Area not provided"}, ${donor.city}, ${donor.state}`),
+        makeTextElement("p", `${donor.availability_status} · Search-area match is approximate; this is not live GPS and no distance is calculated.`),
         makeTextElement("p", "Phone number is shown only if this donor accepts your request and separately consents to share contact details."),
         makeTextElement("p", `Last confirmed: ${formatDashboardDate(donor.last_confirmed_at)} · ${
           donor.availability_mode === "selected_dates"
@@ -577,6 +577,12 @@ async function loadDashboard() {
     logoutButton.hidden = false;
 
     if (user.role === "donor") {
+      document.getElementById("profileLocationCard").hidden = false;
+      const locationForm = document.getElementById("profileLocationForm");
+      locationForm.elements.city.value = user.city || "";
+      locationForm.elements.state.value = user.state || "";
+      locationForm.elements.place.value = user.place || "";
+      locationForm.addEventListener("submit", saveDonorProfileLocation);
       await loadDonorAvailability();
       document.getElementById("availabilityCard").hidden = false;
       document.getElementById("healthScreeningCard").hidden = false;
@@ -611,6 +617,38 @@ async function loadDashboard() {
     welcome.textContent = error.status === 401
       ? "Please log in to view your dashboard."
       : `Could not verify your login: ${error.message}`;
+  }
+}
+
+async function saveDonorProfileLocation(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = document.getElementById("saveProfileLocation");
+  const message = document.getElementById("profileLocationMessage");
+  if (!form.reportValidity()) return;
+  button.disabled = true;
+  message.textContent = "Saving your registered location…";
+  try {
+    const result = await requestJson("/api/donor/profile-location", {
+      method: "PATCH",
+      body: {
+        city: form.elements.city.value.trim(),
+        state: form.elements.state.value.trim(),
+        place: form.elements.place.value.trim()
+      }
+    });
+    dashboardUser = { ...dashboardUser, ...result.location };
+    message.textContent = "Your registered location was saved. Patient search will use this city and area when you opt in.";
+    try {
+      localStorage.setItem("lifedrop-availability-updated", String(Date.now()));
+    } catch (error) {
+      console.warn("Could not signal the open admin dashboard to refresh:", error);
+    }
+  } catch (error) {
+    console.error("Donor profile location could not be saved:", error);
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
   }
 }
 

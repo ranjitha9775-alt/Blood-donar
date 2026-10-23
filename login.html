@@ -90,16 +90,17 @@
         <button class="btn btn-outline" id="logoutButton" type="button">Log out</button>
       </div>
       <h2 id="availabilityTitle">Available donors near your location</h2>
-      <p class="help" id="availabilityHelp">We automatically check for currently available donors in your registered city and state after login and refresh results every 15 seconds while this page is open. You can change the location or filter by blood group. Results show registered names and city/area only for confirmed donors who opted in. Phone numbers are shared only after a donor accepts a specific request and separately consents. Emergency request notifications are in-app only.</p>
+      <p class="help" id="availabilityHelp">We automatically check for currently available donors in your registered city and state after login and refresh results every 15 seconds while this page is open. Location is the donor’s registered city and saved area—not live GPS. Results show registered names and locations only for donors who opted in. Phone numbers are shared only after a donor accepts a specific request and separately consents. Emergency request notifications are in-app only.</p>
       <form class="donor-opt-in" id="donorAvailabilityForm" hidden>
         <h3>Manage your donor availability</h3>
-        <p>Opt in to appear as a privacy-safe donor match while your confirmation is current. You can turn this off at any time.</p>
-        <label class="consent-label"><input id="donorAvailabilityConsent" name="consent" type="checkbox"><span>I am currently available and explicitly consent to showing my blood group and approximate city/state in donor search. My name, phone, email, and exact area are not shown in search results.</span></label>
+        <p>Manage whether patients can find you while your confirmation is current. You can turn this off at any time.</p>
+        <label class="consent-label"><input id="donorAvailabilityConsent" name="consent" type="checkbox"><span>I am currently available and consent to showing my blood group and registered city/state in patient search. To appear by name and area, enable both Live Search options in My Donation Availability in the Donor Portal. Location uses profile details, not live GPS; phone and email remain private.</span></label>
         <div class="field"><label for="loginAvailabilityExpiry">Confirmation duration</label><select id="loginAvailabilityExpiry"><option value="4">4 hours</option><option value="12">12 hours</option><option value="24" selected>24 hours</option></select></div>
         <div class="availability-actions">
           <button class="btn btn-primary" type="submit">Update availability</button>
           <p class="availability-status" id="donorAvailabilityMessage" aria-live="polite"></p>
         </div>
+        <p class="help"><a href="/donor-dashboard.html">Open Donor Portal</a> to save future availability dates and choose whether your registered name and area appear in Live Donor Search.</p>
       </form>
       <form class="search-grid" id="availabilityForm">
         <div class="field"><label for="searchCity">City</label><input id="searchCity" name="city" type="search" required minlength="2" maxlength="80" placeholder="e.g. Bengaluru"></div>

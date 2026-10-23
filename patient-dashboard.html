@@ -52,7 +52,7 @@
     <p class="muted" id="welcome">Checking your login…</p>
     <section class="card" aria-labelledby="donorSearchTitle">
       <h2 id="donorSearchTitle">Find blood · Live donor search</h2>
-      <p class="muted">Live matches include only registered donors who are confirmed available and separately opted in to show their name and area. Phone numbers, email addresses, and exact addresses are not shown in search; a donor's phone is shared only after they accept a specific request and consent to contact sharing. Location is approximate because the search does not collect coordinates.</p>
+      <p class="muted">Live matches use the donor’s registered city and saved area—not live GPS. Only donors with current confirmed availability who opted into search and name/area display appear. If a donor has no area saved, the result says “Area not provided.” Phone numbers, email addresses, and exact addresses stay private; a phone is shared only after that donor accepts a specific request and separately consents to contact sharing.</p>
       <form id="patientDonorSearchForm">
         <div class="search-grid">
           <div class="field"><label for="searchState">State</label><input id="searchState" value="Karnataka" readonly></div>
@@ -64,7 +64,7 @@
           <div class="field"><label for="searchUnits">Units required</label><input id="searchUnits" type="number" min="1" max="20" step="1" value="1" required></div>
           <label class="consent"><input id="searchEmergency" type="checkbox"><span>Prioritize for an emergency</span></label>
         </div>
-        <p class="muted">Without a reliable search-origin coordinate, the 5/10/25/50 km choices return approximate city-level matches rather than calculated distances. Wider search checks opted-in donors across Karnataka. A required date matches a donor's saved date or current general confirmation. Exact blood-group matches are not medical compatibility advice; the treating blood bank must confirm compatibility.</p>
+        <p class="muted">The 5/10/25/50 km choices are approximate city-level search areas, not GPS distances. An area filter matches the donor’s saved area. Wider search checks opted-in donors across Karnataka. A required date matches a donor's saved date or current general confirmation. Exact blood-group matches are not medical compatibility advice; the treating blood bank must confirm compatibility.</p>
         <button id="searchDonorsButton" type="submit">Search confirmed donors</button>
       </form>
       <p class="message" id="donorSearchMessage" aria-live="polite">Choose a blood group to search.</p>

@@ -2125,7 +2125,7 @@ app.get('/api/me', requireDatabase, async (req, res) => {
   if (!userId) return res.json({ user: null });
   try {
     const [users] = await db.execute(
-      'SELECT user_id, username, full_name, email, role, city, state FROM users WHERE user_id = ? LIMIT 1',
+      'SELECT user_id, username, full_name, email, role, city, state, place FROM users WHERE user_id = ? LIMIT 1',
       [userId]
     );
     if (!users.length) {
@@ -2136,6 +2136,49 @@ app.get('/api/me', requireDatabase, async (req, res) => {
   } catch (error) {
     console.error('Session lookup failed:', error.code || error.message);
     res.status(500).json({ message: 'Could not verify your login session.' });
+  }
+});
+
+app.patch('/api/donor/profile-location', requireDatabase, requireSession, async (req, res) => {
+  if (req.user.role !== 'donor') {
+    return res.status(403).json({ message: 'Only donor accounts can update a donor profile location.' });
+  }
+  const city = typeof req.body?.city === 'string' ? req.body.city.trim() : '';
+  const state = typeof req.body?.state === 'string' ? req.body.state.trim() : '';
+  const place = typeof req.body?.place === 'string' ? req.body.place.trim() : '';
+  if (!isNonEmptyString(city, 80) ||
+      !isNonEmptyString(state, 80) ||
+      !isNonEmptyString(place, 100)) {
+    return res.status(400).json({ message: 'Enter a city, state, and area/locality within the allowed lengths.' });
+  }
+  let connection;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    const [donorRows] = await connection.execute(
+      'SELECT user_id FROM donors WHERE user_id = ? LIMIT 1',
+      [req.user.user_id]
+    );
+    if (!donorRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Donor profile was not found.' });
+    }
+    await connection.execute(
+      'UPDATE users SET city = ?, state = ?, place = ? WHERE user_id = ? AND role = ?',
+      [city, state, place, req.user.user_id, 'donor']
+    );
+    await connection.execute(
+      'UPDATE donors SET city = ?, state = ?, place = ? WHERE user_id = ?',
+      [city, state, place, req.user.user_id]
+    );
+    await connection.commit();
+    res.json({ message: 'Donor profile location saved.', location: { city, state, place } });
+  } catch (error) {
+    if (connection) await connection.rollback().catch(() => {});
+    console.error('Donor profile location update failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not save your profile location.' });
+  } finally {
+    if (connection) connection.release();
   }
 });
 

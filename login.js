@@ -162,7 +162,7 @@
           const availableUntil = new Date(donor.available_until);
           return `<article class="result-card">
             <h3>${escapeHtml(donor.name)} · ${escapeHtml(donor.blood_group)}</h3>
-            <p>${donor.place ? `${escapeHtml(donor.place)}, ` : ""}${escapeHtml(donor.city)}, ${escapeHtml(donor.state)}</p>
+            <p>Registered location: ${donor.place ? `${escapeHtml(donor.place)}, ` : "Area not provided, "}${escapeHtml(donor.city)}, ${escapeHtml(donor.state)}</p>
             <p>Available until ${escapeHtml(availableUntil.toLocaleString())}</p>
             <p>Last confirmed ${escapeHtml(new Date(donor.last_confirmed_at).toLocaleString())}. Phone numbers are shared only after this donor accepts a specific request and consents to contact sharing.</p>
           </article>`;
