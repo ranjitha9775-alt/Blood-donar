@@ -123,6 +123,7 @@ async function submitDailyStock(event) {
       })
     });
     message.textContent = `${result.message} Stock date: ${result.stock_date || "server date unavailable"} (UTC) · Updated ${formatPortalTime(result.last_updated)} · ${result.available_units} available unit(s), pending verification.`;
+    document.dispatchEvent(new Event("lifedrop:notifications-updated"));
     await loadStockPortal();
   } catch (error) {
     message.textContent = error.message;
@@ -146,6 +147,7 @@ async function initializeStockPortal() {
       window.location.replace(destination);
       return;
     }
+    if (window.LifeDropNotifications) window.LifeDropNotifications.start();
     document.getElementById("logout-button").hidden = false;
     document.getElementById("inventoryForm").addEventListener("submit", submitDailyStock);
     document.getElementById("logout-button").addEventListener("click", async () => {

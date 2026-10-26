@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#c6283d">
   <title>Donor Dashboard — LifeDrop</title>
   <link rel="stylesheet" href="/notification-center.css">
+  <link rel="stylesheet" href="/portal-nav.css">
   <style>
     :root { color-scheme: light; --red: #c6283d; --ink: #20232b; --muted: #687080; --line: #e4e7ed; --canvas: #f5f7fa; --green: #167447; }
     * { box-sizing: border-box; }
@@ -16,6 +17,7 @@
     a { color: inherit; text-decoration: none; }
     .brand { font-size: 20px; font-weight: 800; }
     .brand span { color: var(--red); }
+    .availability-nav-link { color: var(--red); font-weight: 750; text-decoration: underline; text-underline-offset: 3px; }
     main { padding: 30px 0 56px; }
     h1 { margin: 0 0 4px; font-size: clamp(26px, 5vw, 34px); }
     h2 { margin: 0; font-size: 21px; }
@@ -58,12 +60,14 @@
   <header>
     <div class="nav">
       <a class="brand" href="/">Life<span>Drop</span> Donor</a>
+      <a class="availability-nav-link" href="#availabilityCard">Confirm availability</a>
       <button id="logout-button" type="button" hidden>Log out</button>
     </div>
   </header>
   <main>
     <h1>Donor dashboard</h1>
     <p class="muted" id="welcome">Checking your login…</p>
+    <p class="muted">To update your donor status, use the Available or Not Available buttons in the My Donation Availability section below.</p>
 
     <section class="card" id="donationHistoryCard" aria-labelledby="donationHistoryTitle" hidden>
       <h2 id="donationHistoryTitle">Donation History</h2>

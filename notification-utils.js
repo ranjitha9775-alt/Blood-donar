@@ -21,6 +21,30 @@ function markNotificationAsRead(notification, recipient, readAt) {
   return { ...notification, read_at: notification.read_at || readAt };
 }
 
+function getAvailabilityNotificationCopy(status, eligibleForMatching) {
+  if (status === "available") {
+    return {
+      title: "Availability confirmed",
+      message: eligibleForMatching
+        ? "You confirmed that you are available. Matching still depends on a current confirmation, location, and consent."
+        : "You saved Available, but you are not currently eligible for matching. Required recovery and authorized eligibility review still apply."
+    };
+  }
+  if (status === "temporarily_unavailable") {
+    return {
+      title: "Availability updated",
+      message: "Your status is Temporarily Unavailable and you will not appear in donor search until you reconfirm."
+    };
+  }
+  if (status === "not_available") {
+    return {
+      title: "Availability updated",
+      message: "Your status is Not Available and you will not appear in donor search."
+    };
+  }
+  return null;
+}
+
 function createNotificationPayload({
   recipientUserId = null,
   recipientAdminId = null,
@@ -54,6 +78,7 @@ function createNotificationPayload({
 
 module.exports = {
   createNotificationPayload,
+  getAvailabilityNotificationCopy,
   getUnreadNotificationCount,
   markNotificationAsRead,
   isNotificationRecipient,

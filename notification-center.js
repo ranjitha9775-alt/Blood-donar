@@ -3,7 +3,7 @@
 (() => {
   const role = document.body.dataset.notificationRole;
   const nav = document.querySelector("header .nav");
-  if (!["donor", "patient", "admin"].includes(role) || !nav) return;
+  if (!["donor", "patient", "admin", "blood_bank"].includes(role) || !nav) return;
 
   const isAdmin = role === "admin";
   const apiBase = isAdmin ? "/api/admin/notifications" : "/api/notifications";
@@ -140,9 +140,9 @@
   }
 
   async function refreshNotifications() {
+    widget.hidden = false;
     try {
       const data = await requestJson(apiBase);
-      widget.hidden = false;
       listMessage.textContent = "";
       renderNotifications(data.notifications, Number(data.unread_count));
     } catch (error) {
@@ -151,6 +151,10 @@
         return;
       }
       listMessage.textContent = error.message;
+      list.replaceChildren(Object.assign(document.createElement("p"), {
+        className: "notification-panel-message",
+        textContent: "Notifications could not be loaded. Your saved availability is managed separately; try again shortly."
+      }));
     }
   }
 
@@ -177,6 +181,10 @@
   document.addEventListener("keydown", event => {
     if (event.key === "Escape") setOpen(false);
   });
+  document.addEventListener("lifedrop:notifications-updated", refreshNotifications);
+  window.addEventListener("storage", event => {
+    if (event.key === "lifedrop-notifications-updated") refreshNotifications();
+  });
 
   window.LifeDropNotifications = {
     start() {
@@ -185,6 +193,7 @@
       refreshNotifications();
       refreshTimer = window.setInterval(refreshNotifications, 30000);
     },
+    refresh: refreshNotifications,
     stop() {
       if (refreshTimer !== null) window.clearInterval(refreshTimer);
       refreshTimer = null;

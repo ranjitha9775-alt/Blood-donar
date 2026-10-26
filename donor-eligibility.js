@@ -43,6 +43,8 @@
       const statusElement = document.getElementById("eligibilityStatus");
       statusElement.textContent = statusLabels[summary.status] || "Medical Review Required";
       statusElement.classList.toggle("positive", summary.status === "eligibility_confirmed");
+      document.getElementById("donorName").textContent = summary.donor_name || "Not provided";
+      document.getElementById("donorBloodGroup").textContent = summary.blood_group || "Not recorded";
       document.getElementById("lastDonationDate").textContent = formatDate(summary.last_donation_date);
       document.getElementById("daysSinceDonation").textContent =
         summary.days_since_last_donation === null ? "—" : String(summary.days_since_last_donation);
@@ -110,5 +112,6 @@
     }
   }
 
+  if (window.LifeDropNotifications) window.LifeDropNotifications.start();
   loadPortal();
 })();

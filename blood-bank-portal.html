@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#c6283d">
   <title>Blood Bank Daily Stock Portal — LifeDrop</title>
+  <link rel="stylesheet" href="/notification-center.css">
   <style>
     :root { color-scheme: light; --red: #c6283d; --ink: #20232b; --muted: #687080; --line: #e4e7ed; --canvas: #f5f7fa; }
     * { box-sizing: border-box; }
@@ -37,7 +38,7 @@
     @media (max-width: 520px) { .card { padding: 16px; } .nav { align-items: flex-start; padding: 12px 0; } }
   </style>
 </head>
-<body>
+<body data-notification-role="blood_bank">
   <header>
     <div class="nav">
       <a class="brand" href="/">Life<span>Drop</span> Blood Bank</a>
@@ -83,6 +84,7 @@
       <div id="stockHistory" aria-live="polite">Loading update history…</div>
     </section>
   </main>
+  <script src="/notification-center.js" defer></script>
   <script src="/blood-bank-portal.js" defer></script>
 </body>
 </html>

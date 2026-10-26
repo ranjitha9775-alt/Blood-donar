@@ -25,6 +25,7 @@ const {
 } = require('./eligibility-portal-utils');
 const {
   createNotificationPayload,
+  getAvailabilityNotificationCopy,
   isValidNotificationId
 } = require('./notification-utils');
 
@@ -231,6 +232,15 @@ app.get('/app.js', (req, res) => {
 
 app.get('/styles.css', (req, res) => {
   res.sendFile(path.join(__dirname, 'styles.css'));
+});
+
+app.get('/notification-center.css', (req, res) => {
+  res.sendFile(path.join(__dirname, 'notification-center.css'));
+});
+
+app.get('/notification-center.js', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.sendFile(path.join(__dirname, 'notification-center.js'));
 });
 
 app.get('/assets/blood-donation-hero.jpg', (req, res) => {
@@ -546,6 +556,7 @@ app.get('/blood-bank-portal.js', (req, res) => {
   res.sendFile(path.join(__dirname, 'blood-bank-portal.js'));
 });
 app.get('/dashboard.js', (req, res) => {
+  res.set('Cache-Control', 'no-store');
   res.sendFile(path.join(__dirname, 'dashboard.js'));
 });
 app.get('/donor-eligibility.js', (req, res) => {
@@ -2226,6 +2237,27 @@ async function createDonorReminderNotifications(userId) {
   await db.execute(
     `INSERT IGNORE INTO in_app_notifications
        (recipient_user_id, title, message, notification_type, dedupe_key, created_at)
+     SELECT d.user_id, 'Eligibility review is approaching',
+            'Your configured recovery interval is approaching its review date. This reminder is informational; qualified staff must determine eligibility.',
+            'eligibility_review_approaching',
+            CONCAT('eligibility-review-upcoming:', d.user_id, ':',
+              DATE_FORMAT(COALESCE(d.next_eligible_date,
+                DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)), '%Y-%m-%d')),
+            UTC_TIMESTAMP()
+     FROM donors d
+     WHERE d.user_id = ?
+       AND d.last_donation_date IS NOT NULL
+       AND COALESCE(d.next_eligible_date,
+         DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)) > UTC_DATE()
+       AND COALESCE(d.next_eligible_date,
+         DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH))
+           <= DATE_ADD(UTC_DATE(), INTERVAL 7 DAY)
+       AND NOT (${DONOR_ELIGIBILITY_SQL})`,
+    [userId]
+  );
+  await db.execute(
+    `INSERT IGNORE INTO in_app_notifications
+       (recipient_user_id, title, message, notification_type, dedupe_key, created_at)
      SELECT d.user_id, 'Eligibility review is due',
             'Your configured recovery interval has passed. Please review your eligibility portal and request qualified staff review.',
             'eligibility_review_due',
@@ -2270,13 +2302,41 @@ async function createDonorReminderNotifications(userId) {
   );
 }
 
+async function createBloodBankStockReminderNotifications(userId) {
+  await db.execute(
+    `INSERT IGNORE INTO in_app_notifications
+       (recipient_user_id, title, message, notification_type, dedupe_key, created_at)
+     SELECT staff.user_id, 'Daily blood-stock update is due',
+            CONCAT('Submit the daily stock update for ', bank.bank_name,
+                   '. Stock without a fresh verified update is not shown as current.'),
+            'blood_stock_update_due',
+            CONCAT('blood-stock-update-due:', bank.blood_bank_id, ':',
+                   DATE_FORMAT(UTC_DATE(), '%Y-%m-%d')),
+            UTC_TIMESTAMP()
+     FROM blood_bank_staff staff
+     JOIN blood_banks bank ON bank.blood_bank_id = staff.bank_id
+     WHERE staff.user_id = ?
+       AND bank.is_active = 1
+       AND (bank.verification_status = 'verified' OR bank.verified = 1)
+       AND NOT EXISTS (
+         SELECT 1 FROM blood_stock stock
+         WHERE stock.blood_bank_id = bank.blood_bank_id
+           AND stock.last_updated >= UTC_DATE()
+           AND stock.last_updated < DATE_ADD(UTC_DATE(), INTERVAL 1 DAY)
+       )`,
+    [userId]
+  );
+}
+
 app.get('/api/notifications', requireDatabase, requireSession, async (req, res) => {
-  if (!['donor', 'patient'].includes(req.user.role)) {
+  if (!['donor', 'patient', 'blood_bank'].includes(req.user.role)) {
     return res.status(403).json({ message: 'Notifications are not available for this account.' });
   }
   try {
     if (req.user.role === 'donor') {
       await createDonorReminderNotifications(req.user.user_id);
+    } else if (req.user.role === 'blood_bank') {
+      await createBloodBankStockReminderNotifications(req.user.user_id);
     }
     const [[count], [notifications]] = await Promise.all([
       db.execute(
@@ -2305,7 +2365,7 @@ app.get('/api/notifications', requireDatabase, requireSession, async (req, res) 
 
 app.post('/api/notifications/:notificationId/read', requireDatabase, requireSession,
   rateLimit(120, 60 * 60 * 1000), async (req, res) => {
-    if (!['donor', 'patient'].includes(req.user.role)) {
+    if (!['donor', 'patient', 'blood_bank'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Notifications are not available for this account.' });
     }
     const notificationId = req.params.notificationId;
@@ -4375,6 +4435,7 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
       `SELECT availability_status, available, public_contact_consent,
               public_identity_consent,
               emergency_response_consent, availability_mode,
+              (${DONOR_ELIGIBILITY_SQL}) AS eligible_for_matching,
               DATE_FORMAT(availability_expires_at, '%Y-%m-%dT%H:%i:%sZ') AS available_until,
               DATE_FORMAT(last_confirmed_at, '%Y-%m-%dT%H:%i:%sZ') AS last_confirmed_at
        FROM donors
@@ -4387,6 +4448,20 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
         return res.status(404).json({ message: 'No donor profile is linked to this account.' });
       }
       updatedDonor = donors[0];
+      const notification = getAvailabilityNotificationCopy(
+        status,
+        updatedDonor.eligible_for_matching === 1
+      );
+      if (!notification) {
+        throw new Error('Could not create an availability notification for the selected status.');
+      }
+      await saveInAppNotification(connection, {
+        recipientUserId: req.user.user_id,
+        title: notification.title,
+        message: notification.message,
+        type: 'availability_changed',
+        dedupeKey: `availability-change:${req.user.user_id}:${crypto.randomUUID()}`
+      });
       await connection.commit();
     } catch (error) {
       await connection.rollback();
@@ -4485,7 +4560,8 @@ app.get('/api/donor/eligibility-portal', requireDatabase, requireSession, async 
   try {
     const [[donor], [donations]] = await Promise.all([
       db.execute(
-        `SELECT DATE_FORMAT(d.last_donation_date, '%Y-%m-%d') AS last_donation_date,
+        `SELECT u.full_name AS donor_name, d.blood_group,
+                DATE_FORMAT(d.last_donation_date, '%Y-%m-%d') AS last_donation_date,
                 DATE_FORMAT(COALESCE(d.next_eligible_date,
                   DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)),
                   '%Y-%m-%d') AS next_review_date,
@@ -4550,6 +4626,7 @@ app.get('/api/donor/eligibility-portal', requireDatabase, requireSession, async 
                  WHERE erq.donor_user_id = d.user_id
                  ORDER BY erq.requested_at DESC, erq.request_id DESC LIMIT 1) AS request_reviewed_by
          FROM donors d
+         JOIN users u ON u.user_id = d.user_id AND u.role = 'donor'
          WHERE d.user_id = ? LIMIT 1`,
         [req.user.user_id]
       ),
@@ -4616,6 +4693,8 @@ app.get('/api/donor/eligibility-portal', requireDatabase, requireSession, async 
     res.set('Cache-Control', 'no-store');
     res.json({
       summary: {
+        donor_name: donor.donor_name,
+        blood_group: donor.blood_group,
         last_donation_date: donor.last_donation_date,
         next_review_date: donor.next_review_date,
         days_since_last_donation: progress.daysSinceDonation,
@@ -5219,6 +5298,13 @@ async function recordBloodStockUpdate(req, res) {
         transaction_type: transactionType, remarks: remarks || null
       })]
     );
+    await saveInAppNotification(connection, {
+      recipientUserId: req.user.user_id,
+      title: 'Blood stock update saved',
+      message: `${bloodGroup} ${component.replaceAll('_', ' ')} stock was saved for ${req.bloodBank.bank_name} and is pending admin verification.`,
+      type: 'blood_stock_updated',
+      dedupeKey: `blood-stock-update:${idempotencyKey}`
+    });
     await connection.commit();
     syncBloodStockAlerts().catch(error => {
       console.error('Stock alert refresh after update failed:', error.code || error.message);
@@ -5260,12 +5346,16 @@ app.get('/api/blood-stock', requireDatabase, rateLimit(60, 60 * 1000), async (re
   const state = typeof req.query.state === 'string' ? req.query.state.trim() : '';
   const district = typeof req.query.district === 'string' ? req.query.district.trim() : '';
   const city = typeof req.query.city === 'string' ? req.query.city.trim() : '';
+  const area = typeof req.query.area === 'string' ? req.query.area.trim() : '';
+  const bankName = typeof req.query.bank_name === 'string' ? req.query.bank_name.trim() : '';
   const requiredUnits = req.query.required_units === undefined ? 0 : Number(req.query.required_units);
   if (!BLOOD_GROUPS.has(bloodGroup) ||
       !['whole_blood', 'red_cells', 'platelets', 'plasma'].includes(component) ||
       (state && !isNonEmptyString(state, 80)) ||
       (district && !isNonEmptyString(district, 80)) ||
       (city && !isNonEmptyString(city, 80)) ||
+      (area && !isNonEmptyString(area, 120)) ||
+      (bankName && !isNonEmptyString(bankName, 150)) ||
       !Number.isSafeInteger(requiredUnits) || requiredUnits < 0 || requiredUnits > 100000) {
     return res.status(400).json({ message: 'Choose a blood group and component, and valid optional location and unit filters.' });
   }
@@ -5278,6 +5368,8 @@ app.get('/api/blood-stock', requireDatabase, rateLimit(60, 60 * 1000), async (re
     if (state) { filters.push('LOWER(b.state) = LOWER(?)'); values.push(state); }
     if (district) { filters.push('LOWER(b.district) = LOWER(?)'); values.push(district); }
     if (city) { filters.push('LOWER(b.city) = LOWER(?)'); values.push(city); }
+    if (area) { filters.push('LOWER(b.address_text) LIKE LOWER(?)'); values.push(`%${area}%`); }
+    if (bankName) { filters.push('LOWER(b.bank_name) LIKE LOWER(?)'); values.push(`%${bankName}%`); }
     const [rows] = await db.execute(
       `SELECT s.stock_id, b.blood_bank_id, b.bank_name, b.address_text, b.phone, b.email,
               b.city, b.district, b.state, ? AS blood_group, ? AS component,

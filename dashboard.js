@@ -2,6 +2,8 @@
 
 let dashboardUser = null;
 let selectedAvailabilityDates = [];
+let isPatientDonorSearchRunning = false;
+let hasPatientDonorSearchRun = false;
 
 async function requestJson(url, options = {}) {
   const response = await fetch(url, {
@@ -199,18 +201,23 @@ async function saveDonorAvailability(status) {
     });
     await loadDonorAvailability();
     await loadDonorEmergencyRequests();
+    if (window.LifeDropNotifications) {
+      await window.LifeDropNotifications.refresh();
+    }
+    document.dispatchEvent(new Event("lifedrop:notifications-updated"));
     try {
       localStorage.setItem("lifedrop-availability-updated", String(Date.now()));
+      localStorage.setItem("lifedrop-notifications-updated", String(Date.now()));
     } catch (error) {
       console.warn("Could not signal the open admin dashboard to refresh:", error);
     }
     message.textContent = result.status === "Available"
       ? mode === "selected_dates"
-        ? "Your selected availability dates were saved."
-        : `Your availability was saved until ${formatDashboardDate(result.available_until)}.`
+        ? "Saved: your selected dates are set as available. Your donor status is recorded; matching still requires eligibility and consent."
+        : `Saved: your status is Available${result.available_until ? ` until ${formatDashboardDate(result.available_until)}` : ""}. Matching still requires eligibility and consent.`
       : result.status === "Temporarily Unavailable"
-        ? "Your status is Temporarily Unavailable. It will remain off matching until you explicitly confirm availability again."
-        : "Your status was saved as Not Available.";
+        ? "Saved: your status is Temporarily Unavailable. You will stay off matching until you confirm availability again."
+        : "Saved: your status is Not Available. You will not appear in available donor search.";
   } catch (error) {
     console.error("Donor availability could not be saved:", error);
     message.textContent = error.message;
@@ -482,16 +489,20 @@ async function loadPatientResponses() {
   }
 }
 
-async function searchPatientDonors(event) {
-  event.preventDefault();
-  const form = event.currentTarget;
+async function searchPatientDonors(event, isRefresh = false) {
+  if (event) event.preventDefault();
+  if (isPatientDonorSearchRunning) return;
+  const form = document.getElementById("patientDonorSearchForm");
   const button = document.getElementById("searchDonorsButton");
   const message = document.getElementById("donorSearchMessage");
   const results = document.getElementById("donorSearchResults");
-  if (!form.reportValidity()) return;
+  if (!isRefresh && !form.reportValidity()) return;
+  isPatientDonorSearchRunning = true;
   button.disabled = true;
-  results.replaceChildren();
-  message.textContent = "Searching current donor confirmations…";
+  if (!isRefresh) {
+    results.replaceChildren();
+    message.textContent = "Searching current donor confirmations…";
+  }
   const params = new URLSearchParams({
     state: document.getElementById("searchState").value.trim(),
     city: document.getElementById("searchCity").value.trim(),
@@ -500,16 +511,17 @@ async function searchPatientDonors(event) {
   });
   try {
     const data = await requestJson(`/api/donors/search?${params}`);
+    hasPatientDonorSearchRun = true;
     if (!data.donors.length) {
-      message.textContent = "No currently confirmed donors found.";
+      message.textContent = `No currently confirmed donors found · Checked ${formatDashboardDate(data.checked_at)}.`;
       document.getElementById("requestBlood").value = document.getElementById("searchBloodGroup").value;
       document.getElementById("requestCity").value = document.getElementById("searchCity").value.trim();
       const empty = makeTextElement(
         "p",
         "No donor matched the current eligibility and availability checks. Matching verified LifeDrop bank stock is checked below; you can also open official e-RaktKosh."
       );
-      results.append(empty);
-      await searchLocalBloodInventory();
+      results.replaceChildren(empty);
+      if (!isRefresh) await searchLocalBloodInventory();
       return;
     }
     message.textContent =
@@ -546,6 +558,7 @@ async function searchPatientDonors(event) {
     console.error("Patient donor search failed:", error);
     message.textContent = error.message;
   } finally {
+    isPatientDonorSearchRunning = false;
     button.disabled = false;
   }
 }
@@ -758,6 +771,11 @@ async function loadDashboard() {
       document.getElementById("donationHistoryCard").hidden = false;
       await loadDonorDonationHistory();
       document.getElementById("availabilityCard").hidden = false;
+      if (window.location.hash === "#availabilityCard") {
+        window.requestAnimationFrame(() => {
+          document.getElementById("availabilityCard").scrollIntoView({ block: "start" });
+        });
+      }
       document.getElementById("healthScreeningCard").hidden = false;
       document.getElementById("healthScreeningForm").addEventListener("submit", submitDonorHealthScreening);
       await loadDonorHealthScreening();
@@ -787,6 +805,11 @@ async function loadDashboard() {
       await loadPatientRequestStatuses();
       window.setInterval(loadPatientResponses, 30000);
       window.setInterval(loadPatientRequestStatuses, 30000);
+      window.setInterval(() => {
+        if (hasPatientDonorSearchRun && !document.hidden) {
+          searchPatientDonors(null, true);
+        }
+      }, 15000);
     }
   } catch (error) {
     console.error("Dashboard login verification failed:", error);

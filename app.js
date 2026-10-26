@@ -187,24 +187,24 @@
         const results = document.getElementById("dailyStockResults");
         if (!form.reportValidity()) return;
         button.disabled = true;
-        message.textContent = "Checking the latest verified LifeDrop stock report…";
+        message.textContent = "Checking the latest LifeDrop stock reports…";
         results.replaceChildren();
         const params = new URLSearchParams({
           blood_group: form.elements.blood_group.value,
           component: form.elements.component.value,
           required_units: form.elements.required_units.value
         });
-        for (const name of ["state", "district", "city"]) {
+        for (const name of ["state", "district", "city", "area", "bank_name"]) {
           const value = form.elements[name].value.trim();
           if (value) params.set(name, value);
         }
         try {
           const data = await requestJson(`/api/blood-stock?${params}`);
-          message.textContent = `${data.inventory.length} verified bank record(s) · Checked ${new Date(data.checked_at).toLocaleString()}. Stock is reported, not reserved.`;
+          message.textContent = `${data.inventory.length} bank report(s) · Checked ${new Date(data.checked_at).toLocaleString()}. Only fresh, verified quantities are confirmed; stock is reported, not reserved.`;
           if (!data.inventory.length) {
             results.append(Object.assign(document.createElement("div"), {
               className: "empty-state",
-              textContent: "No matching verified daily stock reports were found. Check the separate e-RaktKosh search above or contact a local blood bank directly."
+              textContent: "No matching daily stock reports were found. Check the separate e-RaktKosh search above or contact a local blood bank directly."
             }));
             return;
           }

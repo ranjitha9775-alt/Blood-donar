@@ -4,11 +4,19 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   createNotificationPayload,
+  getAvailabilityNotificationCopy,
   getUnreadNotificationCount,
   isNotificationRecipient,
   markNotificationAsRead,
   isValidNotificationId
 } = require("./notification-utils");
+
+test("availability confirmation messages reflect donor matching eligibility", () => {
+  assert.match(getAvailabilityNotificationCopy("available", true).message, /current confirmation/);
+  assert.match(getAvailabilityNotificationCopy("available", false).message, /not currently eligible/);
+  assert.match(getAvailabilityNotificationCopy("not_available", true).message, /will not appear/);
+  assert.equal(getAvailabilityNotificationCopy("unknown", false), null);
+});
 
 test("creates validated, deduplicatable notification records without private details", () => {
   assert.deepEqual(createNotificationPayload({

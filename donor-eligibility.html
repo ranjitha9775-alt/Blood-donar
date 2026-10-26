@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#c6283d">
   <title>Donor Eligibility Portal — LifeDrop</title>
+  <link rel="stylesheet" href="/notification-center.css">
   <style>
     :root { color-scheme: light; --red: #c6283d; --ink: #20232b; --muted: #687080; --line: #e4e7ed; --canvas: #f5f7fa; --green: #176c44; --amber: #75520a; }
     * { box-sizing: border-box; }
@@ -41,7 +42,7 @@
     @media (max-width: 520px) { .card { padding: 17px; } }
   </style>
 </head>
-<body>
+<body data-notification-role="donor">
   <header>
     <div class="nav">
       <a class="brand" href="/donar-dashboard.html">Life<span>Drop</span> Donor</a>
@@ -56,6 +57,8 @@
       <h2 id="statusTitle">Eligibility summary</h2>
       <span id="eligibilityStatus" class="status" aria-live="polite">Loading status…</span>
       <div class="summary">
+        <div class="metric"><span class="muted">Donor</span><strong id="donorName">—</strong></div>
+        <div class="metric"><span class="muted">Blood group</span><strong id="donorBloodGroup">—</strong></div>
         <div class="metric"><span class="muted">Last verified donation</span><strong id="lastDonationDate">—</strong></div>
         <div class="metric"><span class="muted">Days since donation</span><strong id="daysSinceDonation">—</strong></div>
         <div class="metric"><span class="muted">Expected review date</span><strong id="nextReviewDate">—</strong></div>
@@ -66,7 +69,7 @@
         <div id="recoveryProgress" class="progress-fill"></div>
       </div>
       <p class="muted">This calendar-based progress indicator is informational only. It does not measure recovery or prove medical eligibility.</p>
-      <div class="actions"><a class="button secondary" href="/donar-dashboard.html">Manage availability</a></div>
+      <div class="actions"><a class="button secondary" href="/donar-dashboard.html">Manage availability</a><a class="button secondary" href="/donar-dashboard.html#healthScreeningCard">Complete health screening</a></div>
     </section>
 
     <section class="card" aria-labelledby="historyTitle">
@@ -104,6 +107,7 @@
       <p class="muted">Final eligibility is determined by qualified blood-bank staff using applicable medical guidelines.</p>
     </section>
   </main>
+  <script src="/notification-center.js" defer></script>
   <script src="/donor-eligibility.js" defer></script>
 </body>
 </html>

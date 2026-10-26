@@ -180,7 +180,10 @@
     .toast.show { opacity: 1; transform: translateY(0); }
     :focus-visible { outline: 3px solid rgba(198,40,61,.45); outline-offset: 3px; }
     @media (max-width: 900px) {
-      .nav-links { gap: 14px; }
+      .nav-links { display: none; position: absolute; top: 75px; left: 0; right: 0; padding: 16px 22px 20px; background: white; border-bottom: 1px solid var(--line); flex-direction: column; align-items: stretch; }
+      .nav-links.open { display: flex; }
+      .nav-links a { padding: 8px 0; }
+      .menu-toggle { display: block; }
       .hero-grid { gap: 15px; }
       .quick-grid { grid-template-columns: repeat(2, 1fr); }
       .search-area { grid-template-columns: repeat(2, 1fr); }
@@ -190,7 +193,6 @@
     @media (max-width: 680px) {
       .shell { width: min(100% - 32px, 520px); }
       .nav { height: 66px; }
-      .menu-toggle { display: block; }
       .nav-links { display: none; position: absolute; top: 65px; left: 0; right: 0; padding: 16px 22px 20px; background: white; border-bottom: 1px solid var(--line); flex-direction: column; align-items: stretch; }
       .nav-links.open { display: flex; }
       .nav-links a { padding: 8px 0; }
@@ -323,6 +325,8 @@
             <div class="field"><label for="dailyStockState">State</label><input id="dailyStockState" name="state" maxlength="80" autocomplete="address-level1"></div>
             <div class="field"><label for="dailyStockDistrict">District</label><input id="dailyStockDistrict" name="district" maxlength="80"></div>
             <div class="field"><label for="dailyStockCity">City</label><input id="dailyStockCity" name="city" maxlength="80"></div>
+            <div class="field"><label for="dailyStockArea">Area / address</label><input id="dailyStockArea" name="area" maxlength="120"></div>
+            <div class="field"><label for="dailyStockBankName">Blood bank name</label><input id="dailyStockBankName" name="bank_name" maxlength="150"></div>
             <div class="field"><label for="dailyStockGroup">Blood group</label><select id="dailyStockGroup" name="blood_group" required><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
             <div class="field"><label for="dailyStockComponent">Component</label><select id="dailyStockComponent" name="component" required><option value="red_cells">Packed red blood cells</option><option value="platelets">Platelets</option><option value="plasma">Plasma</option><option value="whole_blood">Whole blood</option></select></div>
             <div class="field"><label for="dailyStockUnits">Units needed</label><input id="dailyStockUnits" name="required_units" type="number" min="1" max="100000" step="1" value="1" required></div>
@@ -361,7 +365,7 @@
         <div><a class="brand" href="#home"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M12 2.8S5.5 10 5.5 14.8a6.5 6.5 0 0 0 13 0C18.5 10 12 2.8 12 2.8Z" fill="currentColor"/></svg></span><span>Life<span>Drop</span></span></a><p>A student project demonstration. Live donor contact details are available only to logged-in users and only with donor opt-in. This is not an emergency service.</p></div>
         <div class="footer-links"><a href="#availability">Find blood</a><a href="#stocks">Blood stocks</a><a href="#camps">Donation camps</a><a href="#about">Donation awareness</a></div>
       </div>
-      <div class="footer-bottom"><span>© 2026 LifeDrop Demo</span><span>Demo data only · No live inventory · No medical advice</span></div>
+      <div class="footer-bottom"><span>© 2026 LifeDrop Demo</span><span>Manually reported stock · No external live inventory feed · No medical advice</span></div>
     </div>
   </footer>
   <dialog id="campRegistrationDialog" aria-labelledby="campRegistrationTitle">
