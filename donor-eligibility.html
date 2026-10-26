@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#c6283d">
   <title>Donor Eligibility Portal — LifeDrop</title>
   <link rel="stylesheet" href="/notification-center.css">
+  <link rel="stylesheet" href="/portal-nav.css">
   <style>
     :root { color-scheme: light; --red: #c6283d; --ink: #20232b; --muted: #687080; --line: #e4e7ed; --canvas: #f5f7fa; --green: #176c44; --amber: #75520a; }
     * { box-sizing: border-box; }
@@ -46,6 +47,8 @@
   <header>
     <div class="nav">
       <a class="brand" href="/donar-dashboard.html">Life<span>Drop</span> Donor</a>
+      <nav class="site-nav-links" data-site-nav aria-label="Main navigation"></nav>
+      <button class="site-nav-toggle" data-site-nav-toggle type="button" aria-expanded="false" aria-label="Open navigation">Menu</button>
       <a href="/donar-dashboard.html">Back to donor dashboard</a>
     </div>
   </header>
@@ -59,11 +62,15 @@
       <div class="summary">
         <div class="metric"><span class="muted">Donor</span><strong id="donorName">—</strong></div>
         <div class="metric"><span class="muted">Blood group</span><strong id="donorBloodGroup">—</strong></div>
-        <div class="metric"><span class="muted">Last verified donation</span><strong id="lastDonationDate">—</strong></div>
+        <div class="metric"><span class="muted">Last recorded donation</span><strong id="lastDonationDate">—</strong></div>
         <div class="metric"><span class="muted">Days since donation</span><strong id="daysSinceDonation">—</strong></div>
-        <div class="metric"><span class="muted">Expected review date</span><strong id="nextReviewDate">—</strong></div>
+        <div class="metric"><span class="muted">Next eligible donation date (preliminary)</span><strong id="nextReviewDate">—</strong></div>
+        <div class="metric"><span class="muted">Remaining waiting period</span><strong id="remainingWaitingPeriod">—</strong></div>
+        <div class="metric"><span class="muted">Health screening status</span><strong id="healthScreeningStatus">—</strong></div>
         <div class="metric"><span class="muted">Live donor matching</span><strong id="matchingStatus">Checking…</strong></div>
       </div>
+      <p id="eligibilityReason" class="notice" aria-live="polite">Loading preliminary eligibility reason…</p>
+      <p class="muted">This page shows screening status and review instructions only; detailed health responses remain private in the Donor Portal and are visible only to you and authorized staff.</p>
       <p id="recoveryLabel" class="muted">Recovery period progress</p>
       <div class="progress-track" role="progressbar" aria-label="Recovery period elapsed; not a medical recovery assessment" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
         <div id="recoveryProgress" class="progress-fill"></div>
@@ -107,6 +114,7 @@
       <p class="muted">Final eligibility is determined by qualified blood-bank staff using applicable medical guidelines.</p>
     </section>
   </main>
+  <script src="/portal-nav.js" defer></script>
   <script src="/notification-center.js" defer></script>
   <script src="/donor-eligibility.js" defer></script>
 </body>

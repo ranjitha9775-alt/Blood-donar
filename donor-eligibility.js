@@ -49,6 +49,14 @@
       document.getElementById("daysSinceDonation").textContent =
         summary.days_since_last_donation === null ? "—" : String(summary.days_since_last_donation);
       document.getElementById("nextReviewDate").textContent = formatDate(summary.next_review_date);
+      document.getElementById("remainingWaitingPeriod").textContent =
+        summary.remaining_waiting_days === null
+          ? "No waiting period recorded"
+          : `${summary.remaining_waiting_days} day(s)`;
+      document.getElementById("healthScreeningStatus").textContent =
+        summary.latest_screening_status || "Not submitted";
+      document.getElementById("eligibilityReason").textContent =
+        summary.eligibility_reason || "A qualified staff review is required.";
       document.getElementById("matchingStatus").textContent =
         summary.can_appear_in_live_matching ? "Can appear if availability is current" : "Not currently matchable";
       document.getElementById("recoveryLabel").textContent =

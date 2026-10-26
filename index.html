@@ -237,7 +237,7 @@
         <span>Life<span>Drop</span></span>
       </a>
       <nav class="nav-links" id="navLinks" aria-label="Main navigation">
-        <a href="#home">Home</a><a href="#availability">Find blood</a><a href="#stocks">Blood stocks</a><a href="#camps">Donation camps</a><a href="#about">About</a><a href="#portals">Donor Portal</a><a href="#portals">Patient Portal</a><a href="/admin">Admin Portal</a><a href="/login">Login</a>
+        <a href="#home">Home</a><a href="/donor-dashboard.html">Donor Portal</a><a href="/donor-eligibility.html">Donor Eligibility</a><a href="/login?next=%2Fblood-bank-portal.html">Blood Bank Portal</a><a href="/login?next=%2Fpatient-dashboard.html">Patient Portal</a><a href="/login?next=%2Fpatient-dashboard.html">Live Donor Search</a><a href="#urgent">Emergency Blood Request</a><a href="/admin">Admin Portal</a><a href="/login">Login / Register</a>
       </nav>
       <div class="nav-actions">
         <button class="btn btn-outline btn-small" type="button" data-open="requestDialog">Emergency request</button>
@@ -418,7 +418,7 @@
             </div>
           </div>
           <div class="field" id="lastDonationField" hidden><label for="lastDonation">Last donation date <span class="form-hint">(optional)</span></label><input id="lastDonation" name="lastDonation" type="date"></div>
-          <label class="check-field span-2" id="donorInterestField" hidden><input name="availability" type="checkbox"><span>I confirm that I am currently available to be contacted about donation opportunities. This status expires after 24 hours and does not confirm medical eligibility.</span></label>
+          <p class="form-hint span-2" id="donorInterestField" hidden>Registration does not confirm availability. After creating your account, use the Donor Portal to explicitly choose Available or Not Available.</p>
           <label class="check-field span-2" id="publicContactField" hidden><input name="publicContactConsent" type="checkbox"><span>I explicitly agree to showing my confirmed blood group and registered city/state in patient donor search. To show my registered name and saved area, I must also opt in from My Donation Availability after registration. Location is from my profile, not live GPS; my phone and email are not shown in search.</span></label>
           <label class="check-field span-2"><input name="consent" type="checkbox" required><span>I consent to creating an account and storing these profile details in the configured MySQL database. Public donor search requires the separate opt-in above; contact sharing requires a separate consent for an individual request.</span></label>
         </div>

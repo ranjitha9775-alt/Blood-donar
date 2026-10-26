@@ -393,7 +393,6 @@
         });
         if (!isDonor) {
           document.getElementById("lastDonation").value = "";
-          donorInterestField.querySelector("input").checked = false;
           publicContactField.querySelector("input").checked = false;
         }
         if (!isPatient) {
@@ -516,7 +515,6 @@
               state: String(data.get("state")).trim(),
               place: String(data.get("place")).trim(),
               last_donation_date: role === "donor" ? data.get("lastDonation") || null : null,
-              is_available: role === "donor" && data.has("availability"),
               public_contact_consent: role === "donor" && data.has("publicContactConsent"),
               hospital_name: role === "patient" ? String(data.get("hospital_name")).trim() : null,
               units_required: role === "patient" ? Number(data.get("units_required")) : null,

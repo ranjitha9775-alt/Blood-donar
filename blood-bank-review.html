@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>LifeDrop · Blood-bank review</title>
+  <link rel="stylesheet" href="/portal-nav.css">
   <style>
     :root { color-scheme: light; font-family: Arial, sans-serif; color: #20242b; background: #f5f6f8; }
     body { margin: 0; }
@@ -41,7 +42,7 @@
   </style>
 </head>
 <body>
-  <header><div class="nav"><a class="brand" href="/">Life<span>Drop</span> Blood-bank staff</a><button id="logout-button" type="button" hidden>Log out</button></div></header>
+  <header><div class="nav"><a class="brand" href="/">Life<span>Drop</span> Blood-bank staff</a><nav class="site-nav-links" data-site-nav aria-label="Main navigation"></nav><button class="site-nav-toggle" data-site-nav-toggle type="button" aria-expanded="false" aria-label="Open navigation">Menu</button><button id="logout-button" type="button" hidden>Log out</button></div></header>
   <main>
     <h1>Private donor health screening review</h1>
     <p class="muted">Only authenticated blood-bank staff can view these voluntary responses. Review status is not a substitute for clinical assessment or final donor eligibility decisions.</p>
@@ -96,6 +97,7 @@
       <div id="bankRequests" aria-live="polite"></div>
     </section>
   </main>
+  <script src="/portal-nav.js" defer></script>
   <script src="/blood-bank-review.js" defer></script>
 </body>
 </html>

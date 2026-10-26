@@ -32,11 +32,26 @@ function textCell(value) {
   return cell;
 }
 
+function textRecord(tag, text, className = "") {
+  const element = document.createElement(tag);
+  element.textContent = text;
+  if (className) element.className = className;
+  return element;
+}
+
 async function loadStockPortal() {
   try {
     const data = await requestJson("/api/blood-bank/inventory");
+    const bankLocation = [data.bank.address_text, data.bank.city, data.bank.district, data.bank.state]
+      .filter(Boolean)
+      .join(", ");
+    const bankContact = [
+      data.bank.phone ? `Phone: ${data.bank.phone}` : "",
+      data.bank.email ? `Email: ${data.bank.email}` : "",
+      data.bank.operating_hours ? `Hours: ${data.bank.operating_hours}` : ""
+    ].filter(Boolean).join(" · ");
     document.getElementById("bankIdentity").textContent =
-      `Bank #${data.bank.bank_id} · ${data.bank.bank_name} · ${[data.bank.city, data.bank.district, data.bank.state].filter(Boolean).join(", ")}`;
+      `Bank #${data.bank.bank_id} · ${data.bank.bank_name}${bankLocation ? ` · ${bankLocation}` : ""}${bankContact ? ` · ${bankContact}` : ""}`;
     document.getElementById("portalMessage").textContent =
       `Authorized staff access · ${data.freshness_policy === "UTC calendar day" ? "Stock date uses UTC." : "Stock freshness is server-managed."}`;
     const inventoryRows = document.getElementById("inventoryRows");
@@ -77,6 +92,16 @@ async function loadStockPortal() {
         history.append(record);
       });
     }
+    const alerts = document.getElementById("bankStockAlerts");
+    alerts.replaceChildren(...(data.alerts.length
+      ? data.alerts.map(alert => textRecord(
+        "p",
+        `${alert.blood_group || "All groups"}${alert.component ? ` · ${alert.component.replaceAll("_", " ")}` : ""} · ${alert.alert_type}: ${alert.message} · Updated ${formatPortalTime(alert.last_triggered_at)}`,
+        "record"
+      ))
+      : [textRecord("p", "No active stock alerts. Fresh, verified stock is still required for current public search.", "muted")]));
+    renderBankNotifications(data.notifications);
+    await loadBankRequests();
   } catch (error) {
     document.getElementById("portalMessage").textContent = error.message;
     if (error.status === 401) {
@@ -85,6 +110,110 @@ async function loadStockPortal() {
       document.getElementById("portalMessage").textContent =
         "This staff account is not assigned to an active blood bank. Ask an authorized LifeDrop administrator to verify and map the account.";
     }
+  }
+}
+
+function renderBankNotifications(notifications) {
+  const container = document.getElementById("bankNotifications");
+  container.replaceChildren();
+  if (!notifications.length) {
+    container.append(textRecord("p", "No unread emergency-request notifications.", "muted"));
+    return;
+  }
+  notifications.forEach(notification => {
+    const item = document.createElement("article");
+    item.className = "record";
+    item.append(textRecord(
+      "p",
+      `Emergency request ${notification.request_id} · ${notification.blood_group} ${notification.component.replaceAll("_", " ")} · ${notification.units} unit(s) · ${notification.city}${notification.district ? `, ${notification.district}` : ""} · ${formatPortalTime(notification.created_at)}`
+    ));
+    const actions = document.createElement("div");
+    actions.className = "record-actions";
+    const view = textRecord("a", "View matching request");
+    view.href = "#bankRequestsTitle";
+    actions.append(view);
+    const markRead = textRecord("button", "Mark as read", "button-secondary");
+    markRead.type = "button";
+    markRead.addEventListener("click", async () => {
+      markRead.disabled = true;
+      try {
+        await requestJson(`/api/blood-bank/notifications/${encodeURIComponent(notification.notification_id)}/read`, {
+          method: "POST"
+        });
+        await loadStockPortal();
+      } catch (error) {
+        document.getElementById("portalMessage").textContent = error.message;
+        markRead.disabled = false;
+      }
+    });
+    actions.append(markRead);
+    item.append(actions);
+    container.append(item);
+  });
+}
+
+async function loadBankRequests() {
+  const container = document.getElementById("bankRequests");
+  const message = document.getElementById("bankRequestsMessage");
+  try {
+    const { requests } = await requestJson("/api/blood-bank/emergency-requests");
+    if (!requests.length) {
+      container.replaceChildren(textRecord("p", "No active requests match this bank's assigned service area.", "muted"));
+      message.textContent = "";
+      return;
+    }
+    container.replaceChildren(...requests.map(request => {
+      const record = document.createElement("article");
+      record.className = "record";
+      record.append(
+        textRecord("strong", `Request ${request.request_id} · ${request.blood_group} · ${request.component.replaceAll("_", " ")} · ${request.units} unit(s)`),
+        textRecord("p", `${request.hospital_name} · ${request.city}${request.district ? `, ${request.district}` : ""} · Needed ${formatPortalTime(request.needed_at)}`),
+        textRecord("p", `Contact: ${request.contact_name || "Not provided"} · ${request.contact_phone || "Not provided"}`),
+        textRecord("p", `Coordination status: ${request.coordination_status}${request.is_escalated ? " · Escalated" : ""}`)
+      );
+      const nextStatuses = request.coordination_status === "Pending"
+        ? [["Under Review", "Review"], ["Accepted", "Accept"], ["Rejected", "Reject"]]
+        : request.coordination_status === "Under Review"
+          ? [["Accepted", "Accept"], ["Rejected", "Reject"]]
+          : request.coordination_status === "Accepted"
+            ? [["In Progress", "Mark in progress"], ["Cancelled", "Cancel"]]
+            : [["Fulfilled", "Mark fulfilled"], ["Cancelled", "Cancel"]];
+      const actions = document.createElement("div");
+      actions.className = "record-actions";
+      nextStatuses.forEach(([status, label]) => {
+        const action = textRecord("button", label);
+        action.type = "button";
+        if (status === "Rejected" || status === "Cancelled") action.className = "button-secondary";
+        action.addEventListener("click", async () => {
+          if (status === "Fulfilled" &&
+              !window.confirm("Confirm this request has actually been fulfilled? This action will be recorded.")) return;
+          action.disabled = true;
+          message.textContent = `Updating request ${request.request_id}…`;
+          try {
+            const result = await requestJson(
+              `/api/blood-bank/emergency-requests/${encodeURIComponent(request.request_id)}/status`,
+              {
+                method: "POST",
+                body: JSON.stringify({ status, fulfillment_confirmed: status === "Fulfilled" })
+              }
+            );
+            message.textContent = result.message;
+            document.dispatchEvent(new Event("lifedrop:notifications-updated"));
+            await loadBankRequests();
+          } catch (error) {
+            message.textContent = error.message;
+            action.disabled = false;
+          }
+        });
+        actions.append(action);
+      });
+      record.append(actions);
+      return record;
+    }));
+    message.textContent = "";
+  } catch (error) {
+    console.error("Blood-bank emergency requests could not be loaded:", error);
+    message.textContent = error.message;
   }
 }
 
@@ -161,6 +290,7 @@ async function initializeStockPortal() {
     });
     await loadStockPortal();
     window.setInterval(loadStockPortal, 60000);
+    window.setInterval(loadBankRequests, 30000);
   } catch (error) {
     document.getElementById("portalMessage").textContent = error.message;
   }

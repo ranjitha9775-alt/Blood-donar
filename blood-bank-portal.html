@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#c6283d">
   <title>Blood Bank Daily Stock Portal — LifeDrop</title>
   <link rel="stylesheet" href="/notification-center.css">
+  <link rel="stylesheet" href="/portal-nav.css">
   <style>
     :root { color-scheme: light; --red: #c6283d; --ink: #20232b; --muted: #687080; --line: #e4e7ed; --canvas: #f5f7fa; }
     * { box-sizing: border-box; }
@@ -34,6 +35,14 @@
     th, td { padding: 10px; border-top: 1px solid var(--line); vertical-align: top; }
     th { background: #fafbfc; white-space: nowrap; }
     .message { min-height: 22px; }
+    .record { padding: 13px 0; border-top: 1px solid var(--line); }
+    .record:first-child { border-top: 0; }
+    .record p { margin: 5px 0; }
+    .record-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .button-secondary { background: white; color: var(--ink); border: 1px solid var(--line); }
+    .button-secondary:hover { background: #f7f8fa; }
+    .portal-links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+    .portal-links a { color: var(--red); font-weight: 700; }
     [hidden] { display: none !important; }
     @media (max-width: 520px) { .card { padding: 16px; } .nav { align-items: flex-start; padding: 12px 0; } }
   </style>
@@ -42,12 +51,14 @@
   <header>
     <div class="nav">
       <a class="brand" href="/">Life<span>Drop</span> Blood Bank</a>
+      <nav class="site-nav-links" data-site-nav aria-label="Main navigation"></nav>
+      <button class="site-nav-toggle" data-site-nav-toggle type="button" aria-expanded="false" aria-label="Open navigation">Menu</button>
       <button id="logout-button" type="button" hidden>Log out</button>
     </div>
   </header>
   <main>
     <h1>Blood Bank Daily Stock Portal</h1>
-    <p class="muted">Submit and review daily blood stock for your assigned, authorized blood bank.</p>
+    <p class="muted">Manually update and review daily stock for your assigned, authorized blood bank. Figures are not an external live feed and must be verified before being shown as current.</p>
     <p id="portalMessage" class="message" aria-live="polite">Checking staff access…</p>
     <section class="card" aria-labelledby="bankTitle">
       <h2 id="bankTitle">Assigned blood bank</h2>
@@ -83,7 +94,32 @@
       <h2>Update history</h2>
       <div id="stockHistory" aria-live="polite">Loading update history…</div>
     </section>
+    <section class="card" aria-labelledby="stockAlertTitle">
+      <h2 id="stockAlertTitle">Stock alerts</h2>
+      <p class="muted">Alerts apply to this assigned bank only. Low-stock thresholds are configured by an administrator.</p>
+      <div id="bankStockAlerts" aria-live="polite">Loading stock alerts…</div>
+    </section>
+    <section class="card" aria-labelledby="bankNotificationsTitle">
+      <h2 id="bankNotificationsTitle">In-app notifications</h2>
+      <p class="muted">Emergency request alerts are shown in this portal while you are signed in. No external email or push notifications are configured.</p>
+      <div id="bankNotifications" aria-live="polite">Loading notifications…</div>
+    </section>
+    <section class="card" aria-labelledby="bankRequestsTitle">
+      <h2 id="bankRequestsTitle">Emergency requests</h2>
+      <p class="muted">Requests assigned to your bank or matching its service area. Updating a request records coordination status; acceptance is not fulfillment and does not reserve stock.</p>
+      <p id="bankRequestsMessage" class="message" aria-live="polite"></p>
+      <div id="bankRequests" aria-live="polite">Loading requests…</div>
+    </section>
+    <section class="card" aria-labelledby="staffReviewTitle">
+      <h2 id="staffReviewTitle">Donor screening and eligibility review</h2>
+      <p class="muted">Authorized staff with the required qualifications can review assigned donor screenings and record eligibility decisions.</p>
+      <div class="portal-links">
+        <a href="/blood-bank-review.html">Open staff review and coordination workspace</a>
+      </div>
+      <p class="muted">Bank verification, staff assignment, and cross-bank stock approval remain administrator-only.</p>
+    </section>
   </main>
+  <script src="/portal-nav.js" defer></script>
   <script src="/notification-center.js" defer></script>
   <script src="/blood-bank-portal.js" defer></script>
 </body>

@@ -13,6 +13,7 @@
   cursor: pointer;
 }
 .notification-toggle svg { width: 20px; height: 20px; }
+.notification-toggle-label { font-size: 13px; font-weight: 700; }
 .notification-count {
   min-width: 20px;
   padding: 1px 6px;
@@ -45,6 +46,15 @@
 .notification-item h3 { margin: 0; font-size: 15px; }
 .notification-item p { margin: 5px 0; overflow-wrap: anywhere; }
 .notification-item time, .notification-state { color: var(--muted, #687080); font-size: 12px; }
+.notification-action {
+  display: inline-flex;
+  margin-top: 8px;
+  color: #c6283d;
+  font-size: 13px;
+  font-weight: 750;
+  text-underline-offset: 3px;
+}
+.notification-action:hover { text-decoration: underline; }
 .notification-item .notification-mark-read {
   min-height: 34px;
   margin-top: 8px;

@@ -128,6 +128,20 @@ async function loadDonorAvailability() {
       : data.last_confirmed_at
         ? "You are not currently listed as available."
         : "You have not confirmed availability yet.";
+    const matchingBlockers = [];
+    if (data.status !== "Available") matchingBlockers.push("confirm Available with a current confirmation");
+    if (!data.eligible_for_matching) matchingBlockers.push("complete screening and receive current qualified-staff eligibility approval");
+    if (!data.public_contact_consent) matchingBlockers.push("enable sharing of blood group and city/state in Live Donor Search");
+    if (!data.public_identity_consent) matchingBlockers.push("enable display of your registered name in Live Donor Search");
+    if (data.availability_mode === "selected_dates") {
+      matchingBlockers.push("patients must select one of your saved available dates in their search");
+      if (!data.selected_dates.some(item => item.status === "available")) {
+        matchingBlockers.push("save at least one future date as Available");
+      }
+    }
+    document.getElementById("donorMatchingReadiness").textContent = matchingBlockers.length
+      ? `Patient search: not currently matchable. To appear, ${matchingBlockers.join("; ")}.`
+      : "Patient search: your current confirmation, eligibility, and search-sharing settings pass the donor-side checks. Patients must still search for a compatible blood group and your registered city/state.";
   } catch (error) {
     console.error("Donor availability could not be loaded:", error);
     message.textContent = error.message;
@@ -140,9 +154,16 @@ async function loadDonorDonationHistory() {
   try {
     const data = await requestJson("/api/donor/eligibility-portal");
     const eligibility = data.summary;
+    document.getElementById("donorProfileBloodGroup").textContent =
+      eligibility.blood_group || "Not recorded";
+    document.getElementById("donorProfileLocation").textContent =
+      [dashboardUser?.city, dashboardUser?.place, dashboardUser?.state]
+        .filter(Boolean)
+        .join(", ") || "Not recorded";
     const lastDonation = eligibility.last_donation_date || "No verified donation recorded";
     const nextEligible = eligibility.next_review_date || "Not calculated";
-    summary.textContent = `Last donation: ${lastDonation} · Expected review date: ${nextEligible} · Configured interval: ${eligibility.eligibility_interval_months} calendar month(s).`;
+    const remaining = eligibility.remaining_waiting_days;
+    summary.textContent = `Last recorded donation: ${lastDonation} · Next eligible donation date (preliminary): ${nextEligible} · Remaining configured waiting period: ${remaining === null ? "not applicable" : `${remaining} day(s)`} · Configured interval: ${eligibility.eligibility_interval_months} calendar month(s).`;
     const statusLabels = {
       eligible_for_review: "Eligible for Review",
       recovery_period_in_progress: "Recovery Period in Progress",
@@ -349,6 +370,12 @@ async function loadDonorEmergencyRequests() {
         makeTextElement("p", `Your current availability: ${request.donor_availability_status}.`),
         makeTextElement("p", `Your response: ${request.response_status}. A response does not guarantee attendance or donation.`)
       );
+      if (request.patient_selected) {
+        details.append(makeTextElement(
+          "p",
+          "The patient selected you for coordination. Please coordinate directly with the patient and their hospital or blood bank; this is not medical approval."
+        ));
+      }
       if (request.response_status === "Pending") {
         const contactConsent = document.createElement("label");
         contactConsent.className = "consent";
@@ -458,8 +485,14 @@ async function loadPatientResponses() {
       card.append(
         makeTextElement("strong", `Request ${request.request_id} · ${request.blood_group} · ${request.units} unit(s) · ${request.city}${request.district ? `, ${request.district}` : ""}`),
         makeTextElement("p", `Status: ${request.status}. Needed by ${formatDashboardDate(request.needed_at)}.`),
-        makeTextElement("p", `Responses: ${request.counts.can_help} accepted (confirmation pending), ${request.counts.busy} busy, ${request.counts.cannot_help} declined, ${request.counts.pending} pending, ${request.counts.no_response} no response.`)
+        makeTextElement("p", `Responses: ${request.counts.can_help} accepted, ${request.counts.busy} busy, ${request.counts.cannot_help} declined, ${request.counts.pending} pending, ${request.counts.no_response} no response.`)
       );
+      if (request.selected_donor_confirmed_at) {
+        card.append(makeTextElement(
+          "p",
+          `Selected for coordination: ${formatDashboardDate(request.selected_donor_confirmed_at)}. This is not medical approval.`
+        ));
+      }
       request.donor_responses.forEach(donorResponse => {
         const responseLine = document.createElement("div");
         responseLine.append(makeTextElement("p", donorResponse.status));
@@ -477,6 +510,28 @@ async function loadPatientResponses() {
             `This donor consented to contact sharing: ${donorResponse.donor_name} · ${donorResponse.donor_phone}`
           ));
         }
+        if (donorResponse.can_select && !request.has_selected_donor) {
+          const selectButton = makeTextElement(
+            "button",
+            donorResponse.patient_selected ? "Selected for coordination" : "Confirm donor for coordination"
+          );
+          selectButton.type = "button";
+          selectButton.disabled = donorResponse.patient_selected;
+          selectButton.addEventListener("click", () =>
+            confirmPatientDonor(request.request_id, donorResponse.donor_response_id, selectButton)
+          );
+          responseLine.append(selectButton);
+        } else if (donorResponse.can_select && donorResponse.patient_selected) {
+          responseLine.append(makeTextElement("p", "This donor is selected for coordination."));
+        } else if (donorResponse.can_select && request.has_selected_donor) {
+          responseLine.append(makeTextElement("p", "Another donor is already selected for coordination.", "muted"));
+        } else if (donorResponse.status.startsWith("Accepted")) {
+          responseLine.append(makeTextElement(
+            "p",
+            "This donor has not consented to share contact details, so they cannot be selected for coordination here.",
+            "muted"
+          ));
+        }
         card.append(responseLine);
       });
       return card;
@@ -486,6 +541,31 @@ async function loadPatientResponses() {
   } catch (error) {
     console.error("Emergency donor responses could not be loaded:", error);
     message.textContent = error.message;
+  }
+}
+
+async function confirmPatientDonor(requestId, donorUserId, button) {
+  if (!donorUserId) return;
+  if (!window.confirm(
+    "Select this donor for coordination? This does not confirm medical compatibility or eligibility. Coordinate with the hospital or blood bank."
+  )) return;
+  button.disabled = true;
+  const message = document.getElementById("patientResponsesMessage");
+  message.textContent = "Saving your selection…";
+  try {
+    const result = await requestJson(
+      `/api/my-emergency-requests/${encodeURIComponent(requestId)}/confirm-donor`,
+      {
+        method: "POST",
+        body: JSON.stringify({ donor_user_id: donorUserId })
+      }
+    );
+    message.textContent = result.message;
+    await loadPatientResponses();
+  } catch (error) {
+    console.error("Patient donor selection could not be saved:", error);
+    message.textContent = error.message;
+    await loadPatientResponses();
   }
 }
 
@@ -509,16 +589,20 @@ async function searchPatientDonors(event, isRefresh = false) {
     area: document.getElementById("searchArea").value.trim(),
     blood_group: document.getElementById("searchBloodGroup").value
   });
+  const requiredDate = document.getElementById("searchRequiredDate").value;
+  if (requiredDate) params.set("required_date", requiredDate);
   try {
     const data = await requestJson(`/api/donors/search?${params}`);
     hasPatientDonorSearchRun = true;
     if (!data.donors.length) {
-      message.textContent = `No currently confirmed donors found · Checked ${formatDashboardDate(data.checked_at)}.`;
+      message.textContent = `No donors passed the current matching checks · Checked ${formatDashboardDate(data.checked_at)}.`;
       document.getElementById("requestBlood").value = document.getElementById("searchBloodGroup").value;
       document.getElementById("requestCity").value = document.getElementById("searchCity").value.trim();
       const empty = makeTextElement(
         "p",
-        "No donor matched the current eligibility and availability checks. Matching verified LifeDrop bank stock is checked below; you can also open official e-RaktKosh."
+        requiredDate
+          ? "No donor matched the blood-group compatibility, registered city/state, current confirmation for that date, donor-sharing consent, and eligibility checks. Confirm the entered details or check reported blood-bank stock and official e-RaktKosh."
+          : "No donor matched the blood-group compatibility, registered city/state, current general confirmation, donor-sharing consent, and eligibility checks. Donors who selected specific dates are included when you search for one of those dates. Confirm the entered details or check reported blood-bank stock and official e-RaktKosh."
       );
       results.replaceChildren(empty);
       if (!isRefresh) await searchLocalBloodInventory();
@@ -761,6 +845,9 @@ async function loadDashboard() {
     logoutButton.hidden = false;
 
     if (user.role === "donor") {
+      const bloodGroupSummary = document.getElementById("donorBloodGroupSummary");
+      document.getElementById("donorBloodGroupValue").textContent = user.blood_group || "Not recorded";
+      bloodGroupSummary.hidden = false;
       document.getElementById("profileLocationCard").hidden = false;
       const locationForm = document.getElementById("profileLocationForm");
       locationForm.elements.city.value = user.city || "";
@@ -786,6 +873,8 @@ async function loadDashboard() {
     } else {
       document.getElementById("searchCity").value = user.city || "Mysuru";
       document.getElementById("searchState").value = user.state || "Karnataka";
+      const requiredDateInput = document.getElementById("searchRequiredDate");
+      requiredDateInput.min = new Date().toISOString().slice(0, 10);
       document.getElementById("requestCity").value = user.city || "Mysuru";
       document.getElementById("requestDistrict").value = user.city || "Mysuru";
       document.getElementById("requestContactPhone").value = user.phone || "";
@@ -875,6 +964,15 @@ document.getElementById("notAvailable")?.addEventListener("click", () => {
 
 document.getElementById("temporarilyUnavailable")?.addEventListener("click", () => {
   saveDonorAvailability("temporarily_unavailable");
+});
+
+window.addEventListener("storage", event => {
+  if (event.key === "lifedrop-availability-updated" &&
+      window.location.pathname.includes("patient-dashboard") &&
+      hasPatientDonorSearchRun &&
+      !document.hidden) {
+    searchPatientDonors(null, true);
+  }
 });
 
 document.getElementById("availabilityMode")?.addEventListener("change", renderAvailabilityDates);

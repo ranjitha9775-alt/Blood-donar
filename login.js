@@ -230,6 +230,13 @@
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && !availabilityPanel.hidden) searchAvailableDonors();
   });
+  window.addEventListener("storage", event => {
+    if (event.key === "lifedrop-availability-updated" &&
+        !availabilityPanel.hidden &&
+        !document.hidden) {
+      searchAvailableDonors();
+    }
+  });
 
   requestJson("/api/me")
     .then(data => {

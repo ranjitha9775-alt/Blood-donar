@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#c6283d">
   <title>Patient Dashboard — LifeDrop</title>
   <link rel="stylesheet" href="/notification-center.css">
+  <link rel="stylesheet" href="/portal-nav.css">
   <style>
     :root { color-scheme: light; --red: #c6283d; --ink: #20232b; --muted: #687080; --line: #e4e7ed; --canvas: #f5f7fa; }
     * { box-sizing: border-box; }
@@ -45,6 +46,8 @@
   <header>
     <div class="nav">
       <a class="brand" href="/">Life<span>Drop</span> Patient</a>
+      <nav class="site-nav-links" data-site-nav aria-label="Main navigation"></nav>
+      <button class="site-nav-toggle" data-site-nav-toggle type="button" aria-expanded="false" aria-label="Open navigation">Menu</button>
       <button id="logout-button" type="button" hidden>Log out</button>
     </div>
   </header>
@@ -60,6 +63,7 @@
           <div class="field"><label for="searchArea">Area / locality (optional)</label><input id="searchArea" maxlength="100" placeholder="e.g. Kuvempunagar"></div>
           <div class="field"><label for="searchState">State</label><input id="searchState" value="Karnataka" required maxlength="80"></div>
           <div class="field"><label for="searchBloodGroup">Blood group needed</label><select id="searchBloodGroup" required><option value="">Choose group</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
+          <div class="field"><label for="searchRequiredDate">Date needed (for donors with selected-date availability)</label><input id="searchRequiredDate" type="date"><span class="muted">Optional. Leave blank to search donors with a current general confirmation.</span></div>
         </div>
         <p class="muted">Location matches the donor’s registered city/place and state; it is not live GPS. Search results are potential matches, not a medical compatibility decision. The treating blood bank or medical team must confirm compatibility and eligibility.</p>
         <button id="searchDonorsButton" type="submit">Search confirmed donors</button>
@@ -111,13 +115,14 @@
     </section>
     <section class="card" id="patientResponsesCard" aria-labelledby="patientResponsesTitle" hidden>
       <h2 id="patientResponsesTitle">Responses to your urgent requests</h2>
-      <p class="muted">Donor responses and availability are self-reported. A response does not guarantee attendance or a donation.</p>
-      <div class="safety">For urgent needs, coordinate with the patient's hospital or blood bank immediately. Do not wait for a website response.</div>
+      <p class="muted">Donor responses and availability are self-reported. If a donor accepted and consented to share contact details, you can select them for coordination. This selection is not medical approval and does not guarantee attendance or donation.</p>
+      <div class="safety">For urgent needs, coordinate with the patient's hospital or blood bank immediately. Qualified staff must confirm compatibility and eligibility. Do not wait for a website response.</div>
       <div id="patientResponses" aria-live="polite">Loading responses…</div>
       <p class="muted" id="patientResponsesMessage" aria-live="polite"></p>
     </section>
   </main>
   <script src="/dashboard.js" defer></script>
+  <script src="/portal-nav.js" defer></script>
   <script src="/notification-center.js" defer></script>
 </body>
 </html>

@@ -28,6 +28,10 @@
   bell.setAttribute("stroke-linejoin", "round");
   icon.append(bell);
   toggle.append(icon);
+  const toggleLabel = document.createElement("span");
+  toggleLabel.className = "notification-toggle-label";
+  toggleLabel.textContent = "Notifications";
+  toggle.append(toggleLabel);
   const count = document.createElement("span");
   count.className = "notification-count";
   count.hidden = true;
@@ -107,6 +111,24 @@
       state.textContent = notification.read_at ? " · Read" : " · Unread";
       time.append(state);
       item.append(title, message, time);
+      const actionByType = {
+        availability_confirmation_required: ["/donor-dashboard.html#availabilityCard", "Confirm availability"],
+        availability_reconfirmation: ["/donor-dashboard.html#availabilityCard", "Reconfirm availability"],
+        eligibility_review_approaching: ["/donor-eligibility.html", "Review eligibility"],
+        eligibility_review_due: ["/donor-eligibility.html", "Review eligibility"],
+        emergency_request: ["/donor-dashboard.html#emergencyRequestsCard", "View request"],
+        donor_response: ["/patient-dashboard.html#patientResponsesCard", "Review donor responses"],
+        patient_selected_donor: ["/donor-dashboard.html#emergencyRequestsCard", "View patient selection"],
+        blood_stock_update_due: ["/blood-bank-portal.html", "Update blood stock"]
+      };
+      const action = actionByType[notification.notification_type];
+      if (action) {
+        const link = document.createElement("a");
+        link.className = "notification-action";
+        link.href = action[0];
+        link.textContent = action[1];
+        item.append(link);
+      }
       if (!notification.read_at) {
         const markRead = document.createElement("button");
         markRead.className = "notification-mark-read";

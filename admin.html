@@ -7,6 +7,7 @@
   <meta name="robots" content="noindex, nofollow">
   <title>Admin Dashboard — LifeDrop</title>
   <link rel="stylesheet" href="/notification-center.css">
+  <link rel="stylesheet" href="/portal-nav.css">
   <style>
     :root { color-scheme: light; --red: #c6283d; --red-dark: #a51f32; --ink: #20232b; --muted: #737985; --line: #e7e9ee; --canvas: #f6f7fa; }
     * { box-sizing: border-box; }
@@ -75,6 +76,8 @@
   <header>
     <div class="nav">
       <a class="brand" href="/">Life<span>Drop</span> Admin</a>
+      <nav class="site-nav-links" data-site-nav aria-label="Main navigation"></nav>
+      <button class="site-nav-toggle" data-site-nav-toggle type="button" aria-expanded="false" aria-label="Open navigation">Menu</button>
       <a class="muted" href="/">Back to website</a>
     </div>
   </header>
@@ -188,6 +191,7 @@
       </section>
     </section>
   </main>
+  <script src="/portal-nav.js" defer></script>
   <script src="/admin.js" defer></script>
   <script src="/notification-center.js" defer></script>
 </body>

@@ -60,6 +60,8 @@
   <header>
     <div class="nav">
       <a class="brand" href="/">Life<span>Drop</span> Donor</a>
+      <nav class="site-nav-links" data-site-nav aria-label="Main navigation"></nav>
+      <button class="site-nav-toggle" data-site-nav-toggle type="button" aria-expanded="false" aria-label="Open navigation">Menu</button>
       <a class="availability-nav-link" href="#availabilityCard">Confirm availability</a>
       <button id="logout-button" type="button" hidden>Log out</button>
     </div>
@@ -67,6 +69,7 @@
   <main>
     <h1>Donor dashboard</h1>
     <p class="muted" id="welcome">Checking your login…</p>
+    <p class="muted" id="donorBloodGroupSummary" hidden>Your registered blood group: <strong id="donorBloodGroupValue"></strong></p>
     <p class="muted">To update your donor status, use the Available or Not Available buttons in the My Donation Availability section below.</p>
 
     <section class="card" id="donationHistoryCard" aria-labelledby="donationHistoryTitle" hidden>
@@ -80,6 +83,8 @@
 
     <section class="card" id="profileLocationCard" aria-labelledby="profileLocationTitle" hidden>
       <h2 id="profileLocationTitle">My Profile Location</h2>
+      <p class="muted"><strong>Blood group:</strong> <span id="donorProfileBloodGroup">Loading…</span></p>
+      <p class="muted"><strong>Registered location:</strong> <span id="donorProfileLocation">Loading…</span></p>
       <p class="muted">Patient search uses this registered location, not live GPS. Keep it current so matching patients can find your city and area when you opt in to sharing them.</p>
       <form id="profileLocationForm">
         <div class="field"><label for="profileCity">City</label><input id="profileCity" name="city" maxlength="80" required></div>
@@ -125,8 +130,9 @@
         <label class="consent"><input id="publicContactConsent" type="checkbox"><span>Allow my confirmed blood group and registered city/state to appear in patient Live Donor Search. This must be enabled for patients to find me.</span></label>
         <label class="consent"><input id="publicIdentityConsent" type="checkbox"><span>Also show my registered name and saved area/locality in matching results. Location comes from my profile, not live GPS. If I have not saved an area, patients see that it was not provided. My phone, email, and exact address stay private unless I accept a specific request and separately consent to sharing my contact details.</span></label>
         <label class="consent"><input id="emergencyResponseConsent" type="checkbox"><span>Optional: allow my current availability status and last-confirmed time to be shown for matching urgent requests in my city and blood group. I may choose whether to respond to each request.</span></label>
-        <div class="field" id="availabilityExpiryField"><label for="availabilityExpiry">Availability confirmation duration</label><select id="availabilityExpiry"><option value="4">4 hours</option><option value="12">12 hours</option><option value="24" selected>24 hours</option></select></div>
+        <div class="field" id="availabilityExpiryField"><label for="availabilityExpiry">Availability confirmation duration</label><select id="availabilityExpiry"><option value="4">4 hours</option><option value="12">12 hours</option><option value="24" selected>24 hours</option></select>        </div>
         <p class="message" id="availabilityMessage" aria-live="polite"></p>
+        <p class="message" id="donorMatchingReadiness" aria-live="polite"></p>
       </div>
     </section>
 
@@ -165,6 +171,7 @@
     </section>
   </main>
   <script src="/dashboard.js" defer></script>
+  <script src="/portal-nav.js" defer></script>
   <script src="/notification-center.js" defer></script>
 </body>
 </html>

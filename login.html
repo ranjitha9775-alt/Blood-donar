@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#c6283d">
   <meta name="description" content="Log in to check currently available, opted-in LifeDrop donors.">
   <title>Login — LifeDrop</title>
+  <link rel="stylesheet" href="/portal-nav.css">
   <style>
     :root { color-scheme: light; --red: #c6283d; --red-dark: #a51f32; --ink: #20232b; --muted: #737985; --line: #eceef1; --canvas: #f8f9fb; --green: #287a59; }
     * { box-sizing: border-box; }
@@ -66,6 +67,8 @@
   <header>
     <div class="nav">
       <a class="brand" href="/">Life<span>Drop</span></a>
+      <nav class="site-nav-links" data-site-nav aria-label="Main navigation"></nav>
+      <button class="site-nav-toggle" data-site-nav-toggle type="button" aria-expanded="false" aria-label="Open navigation">Menu</button>
       <a class="back-link" href="/">← Back to home</a>
     </div>
   </header>
@@ -118,6 +121,7 @@
       <div class="notice">This is not verified blood-bank stock or medical advice. Confirm directly with donors. For emergencies, contact the patient's hospital and emergency services immediately.</div>
     </section>
   </main>
+  <script src="/portal-nav.js" defer></script>
   <script src="/login.js" defer></script>
 </body>
 </html>
