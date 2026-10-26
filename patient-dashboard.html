@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#c6283d">
   <title>Patient Dashboard — LifeDrop</title>
+  <link rel="stylesheet" href="/notification-center.css">
   <style>
     :root { color-scheme: light; --red: #c6283d; --ink: #20232b; --muted: #687080; --line: #e4e7ed; --canvas: #f5f7fa; }
     * { box-sizing: border-box; }
@@ -40,7 +41,7 @@
     @media (max-width: 520px) { .card { padding: 17px; } }
   </style>
 </head>
-<body>
+<body data-notification-role="patient">
   <header>
     <div class="nav">
       <a class="brand" href="/">Life<span>Drop</span> Patient</a>
@@ -117,5 +118,6 @@
     </section>
   </main>
   <script src="/dashboard.js" defer></script>
+  <script src="/notification-center.js" defer></script>
 </body>
 </html>

@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#c6283d">
   <meta name="robots" content="noindex, nofollow">
   <title>Admin Dashboard — LifeDrop</title>
+  <link rel="stylesheet" href="/notification-center.css">
   <style>
     :root { color-scheme: light; --red: #c6283d; --red-dark: #a51f32; --ink: #20232b; --muted: #737985; --line: #e7e9ee; --canvas: #f6f7fa; }
     * { box-sizing: border-box; }
@@ -70,7 +71,7 @@
     @media (max-width: 420px) { .stats { gap: 8px; } .stat { padding: 13px; } .stat strong { font-size: 23px; } }
   </style>
 </head>
-<body>
+<body data-notification-role="admin">
   <header>
     <div class="nav">
       <a class="brand" href="/">Life<span>Drop</span> Admin</a>
@@ -188,5 +189,6 @@
     </section>
   </main>
   <script src="/admin.js" defer></script>
+  <script src="/notification-center.js" defer></script>
 </body>
 </html>

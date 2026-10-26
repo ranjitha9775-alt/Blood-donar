@@ -27,8 +27,8 @@ function calculateStock({ physical, reserved, issued, discarded }) {
 }
 
 function getStockStatus({ available, threshold, verified, stale, requiredUnits = 0 }) {
-  if (!verified) return "Availability Unconfirmed";
-  if (stale) return "Update Required";
+  if (stale) return "Outdated";
+  if (!verified) return "Pending Verification";
   if (available === 0) return "Out of Stock";
   if (available < threshold || (requiredUnits > 0 && available < requiredUnits)) return "Low Stock";
   return "Available";

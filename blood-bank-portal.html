@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#c6283d">
+  <title>Blood Bank Daily Stock Portal — LifeDrop</title>
+  <style>
+    :root { color-scheme: light; --red: #c6283d; --ink: #20232b; --muted: #687080; --line: #e4e7ed; --canvas: #f5f7fa; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--canvas); color: var(--ink); font: 15px/1.55 system-ui, "Segoe UI", sans-serif; }
+    header { background: white; border-bottom: 1px solid var(--line); }
+    .nav, main { width: min(1040px, calc(100% - 32px)); margin: auto; }
+    .nav { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    main { padding: 28px 0 56px; }
+    h1 { margin: 0; font-size: clamp(27px, 5vw, 36px); }
+    h2 { margin: 0 0 8px; font-size: 21px; }
+    a { color: inherit; }
+    .brand { text-decoration: none; font-size: 20px; font-weight: 800; }
+    .brand span { color: var(--red); }
+    .muted, .message { color: var(--muted); }
+    .card { margin-top: 18px; padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: white; }
+    .bank-identity, .notice { padding: 14px; border-radius: 10px; background: #f8f9fb; }
+    .stock-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-top: 16px; }
+    .field { display: grid; gap: 6px; }
+    label { font-size: 13px; font-weight: 700; }
+    input, select { width: 100%; min-height: 42px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink); font: inherit; }
+    input:focus, select:focus, button:focus-visible { outline: 3px solid #c6283d33; outline-offset: 2px; }
+    button { min-height: 42px; padding: 0 15px; border: 0; border-radius: 9px; background: var(--red); color: white; font: inherit; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: wait; }
+    .table-scroll { overflow-x: auto; margin-top: 14px; }
+    table { width: 100%; min-width: 850px; border-collapse: collapse; font-size: 13px; text-align: left; }
+    th, td { padding: 10px; border-top: 1px solid var(--line); vertical-align: top; }
+    th { background: #fafbfc; white-space: nowrap; }
+    .message { min-height: 22px; }
+    [hidden] { display: none !important; }
+    @media (max-width: 520px) { .card { padding: 16px; } .nav { align-items: flex-start; padding: 12px 0; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="nav">
+      <a class="brand" href="/">Life<span>Drop</span> Blood Bank</a>
+      <button id="logout-button" type="button" hidden>Log out</button>
+    </div>
+  </header>
+  <main>
+    <h1>Blood Bank Daily Stock Portal</h1>
+    <p class="muted">Submit and review daily blood stock for your assigned, authorized blood bank.</p>
+    <p id="portalMessage" class="message" aria-live="polite">Checking staff access…</p>
+    <section class="card" aria-labelledby="bankTitle">
+      <h2 id="bankTitle">Assigned blood bank</h2>
+      <p class="bank-identity" id="bankIdentity">Loading authorized bank…</p>
+    </section>
+    <section class="card" aria-labelledby="updateTitle">
+      <h2 id="updateTitle">Submit daily stock update</h2>
+      <p class="notice">Stock date and update time are recorded by the server in UTC. Every submission is retained in the update history and requires admin verification before patients see the quantities as current.</p>
+      <form id="inventoryForm">
+        <div class="stock-grid">
+          <div class="field"><label for="bloodGroup">Blood group</label><select id="bloodGroup" name="blood_group" required><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
+          <div class="field"><label for="component">Blood component</label><select id="component" name="component" required><option value="whole_blood">Whole blood</option><option value="red_cells">Packed red blood cells</option><option value="platelets">Platelets</option><option value="plasma">Plasma</option></select></div>
+          <div class="field"><label for="physicalUnits">Physical units</label><input id="physicalUnits" name="physical_units" type="number" min="0" max="100000" step="1" required></div>
+          <div class="field"><label for="reservedUnits">Reserved units</label><input id="reservedUnits" name="reserved_units" type="number" min="0" max="100000" step="1" value="0" required></div>
+          <div class="field"><label for="issuedUnits">Issued units</label><input id="issuedUnits" name="issued_units" type="number" min="0" max="100000" step="1" value="0" required></div>
+          <div class="field"><label for="discardedUnits">Expired / discarded units</label><input id="discardedUnits" name="discarded_units" type="number" min="0" max="100000" step="1" value="0" required></div>
+          <div class="field"><label for="remarks">Notes (optional)</label><input id="remarks" name="remarks" maxlength="500"></div>
+        </div>
+        <p class="muted">Available units are calculated as physical stock minus reserved, issued, and discarded units. A report does not reserve units for a patient.</p>
+        <button id="saveInventory" type="submit">Save daily stock update</button>
+        <p id="inventoryMessage" class="message" aria-live="polite"></p>
+      </form>
+    </section>
+    <section class="card" aria-labelledby="todayTitle">
+      <h2 id="todayTitle">Daily stock records</h2>
+      <p class="muted">Only verified stock updated today (UTC) is current. Older records are labeled Outdated, and pending verification is shown separately.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Blood group</th><th>Component</th><th>Stock date (UTC)</th><th>Physical</th><th>Reserved</th><th>Issued</th><th>Discarded</th><th>Available</th><th>Freshness</th><th>Verification</th><th>Last updated</th></tr></thead>
+          <tbody id="inventoryRows"><tr><td colspan="11">Loading stock records…</td></tr></tbody>
+        </table>
+      </div>
+      <h2>Update history</h2>
+      <div id="stockHistory" aria-live="polite">Loading update history…</div>
+    </section>
+  </main>
+  <script src="/blood-bank-portal.js" defer></script>
+</body>
+</html>

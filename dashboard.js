@@ -733,12 +733,13 @@ async function loadDashboard() {
     }
     const isPatientDashboard = window.location.pathname.includes("patient-dashboard");
     dashboardUser = user;
+    if (window.LifeDropNotifications) window.LifeDropNotifications.start();
     const expectedRole = isPatientDashboard ? "patient" : "donor";
     if (user.role !== expectedRole) {
       const dashboardByRole = {
         donor: "/donar-dashboard.html",
         patient: "/patient-dashboard.html",
-        blood_bank: "/blood-bank-review.html"
+        blood_bank: "/blood-bank-portal.html"
       };
       window.location.replace(dashboardByRole[user.role] || "/login");
       return;

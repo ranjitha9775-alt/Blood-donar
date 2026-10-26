@@ -288,6 +288,7 @@
         <div class="quick-grid">
           <a href="/donor-dashboard.html" class="quick-card"><span class="icon-box" aria-hidden="true">D</span><h3>Donor Portal</h3><p>Manage donation availability and selected dates, review emergency requests, and update your private screening.</p><span class="arrow">Open Donor Portal →</span></a>
           <a href="/patient-dashboard.html" class="quick-card"><span class="icon-box" aria-hidden="true">P</span><h3>Patient Portal</h3><p>Search for confirmed donors, submit emergency blood requests, and follow donor responses.</p><span class="arrow">Open Patient Portal →</span></a>
+          <a href="/login?next=%2Fblood-bank-portal.html" class="quick-card"><span class="icon-box" aria-hidden="true">B</span><h3>Blood Bank Daily Stock Portal</h3><p>Authorized blood-bank staff can sign in to submit and review daily stock for their assigned bank.</p><span class="arrow">Staff sign in →</span></a>
           <a href="/admin" class="quick-card"><span class="icon-box" aria-hidden="true">A</span><h3>Admin Portal</h3><p>Review donor availability, donor registrations, blood requests, and matching progress.</p><span class="arrow">Open Admin Portal →</span></a>
         </div>
       </div>
@@ -316,7 +317,7 @@
           <div class="stock-results" id="hospitalStockResults" aria-live="polite"></div>
           <div class="notice" role="note" style="margin-top:20px"><div><strong>Important:</strong> Stock figures are reports from blood centres, not a reservation or guarantee. Verify availability directly with the centre before travelling. For emergencies in India, contact the patient's hospital and call <a href="tel:112"><strong>112</strong></a>.</div></div>
         </div>
-        <div class="section-head" style="margin-top:28px"><div><p class="section-kicker">LifeDrop daily updates</p><h2>Search verified daily stock</h2><p class="section-desc">Stock is entered by authorized staff, shown only for verified blood banks, and marked Update Required when older than the configured deadline. Availability is not a reservation.</p></div></div>
+        <div class="section-head" style="margin-top:28px"><div><p class="section-kicker">LifeDrop daily updates</p><h2>Search blood bank stock</h2><p class="section-desc">Stock is entered by authorized staff. Only fresh, verified quantities are shown as current; older records are marked Outdated and unverified reports remain unconfirmed. Availability is not a reservation.</p></div></div>
         <div class="panel">
           <form id="dailyStockSearchForm" class="daily-stock-grid">
             <div class="field"><label for="dailyStockState">State</label><input id="dailyStockState" name="state" maxlength="80" autocomplete="address-level1"></div>

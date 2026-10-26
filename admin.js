@@ -28,6 +28,11 @@
   function setSignedIn(signedIn) {
     loginPanel.hidden = signedIn;
     dashboard.hidden = !signedIn;
+    if (signedIn) {
+      if (window.LifeDropNotifications) window.LifeDropNotifications.start();
+    } else if (window.LifeDropNotifications) {
+      window.LifeDropNotifications.stop();
+    }
   }
 
   function formatDate(value) {

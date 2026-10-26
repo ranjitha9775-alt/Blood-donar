@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#c6283d">
   <title>Donor Dashboard — LifeDrop</title>
+  <link rel="stylesheet" href="/notification-center.css">
   <style>
     :root { color-scheme: light; --red: #c6283d; --ink: #20232b; --muted: #687080; --line: #e4e7ed; --canvas: #f5f7fa; --green: #167447; }
     * { box-sizing: border-box; }
@@ -53,7 +54,7 @@
     @media (max-width: 520px) { .card { padding: 17px; } .choice-list { grid-template-columns: 1fr; } .nav { align-items: flex-start; padding: 12px 0; } }
   </style>
 </head>
-<body>
+<body data-notification-role="donor">
   <header>
     <div class="nav">
       <a class="brand" href="/">Life<span>Drop</span> Donor</a>
@@ -160,5 +161,6 @@
     </section>
   </main>
   <script src="/dashboard.js" defer></script>
+  <script src="/notification-center.js" defer></script>
 </body>
 </html>

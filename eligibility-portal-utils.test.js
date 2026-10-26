@@ -37,6 +37,25 @@ test("uses recovery and review states without automatically confirming eligibili
   assert.equal(getEligibilityPortalStatus({ ...base, latestDecision: "deferred", decisionAfterDonation: true }), "temporarily_ineligible");
 });
 
+test("a donation recorded today starts recovery immediately and does not imply eligibility", () => {
+  const today = "2026-10-26";
+  const nextReviewDate = "2027-01-26";
+  assert.equal(getEligibilityPortalStatus({
+    lastDonationDate: today,
+    nextReviewDate,
+    today,
+    latestDecision: "eligible",
+    decisionAfterDonation: false,
+    screeningCleared: true,
+    requestStatus: null
+  }), "recovery_period_in_progress");
+  assert.deepEqual(getRecoveryProgress(today, nextReviewDate, today), {
+    daysSinceDonation: 0,
+    totalRecoveryDays: 92,
+    progressPercent: 0
+  });
+});
+
 test("review requests require recovery to finish and screening clearance", () => {
   const base = {
     today: "2026-10-26",

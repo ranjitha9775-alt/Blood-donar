@@ -23,6 +23,10 @@ const {
   getRecoveryProgress,
   isMatchingEligibilityConfirmed
 } = require('./eligibility-portal-utils');
+const {
+  createNotificationPayload,
+  isValidNotificationId
+} = require('./notification-utils');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -34,6 +38,34 @@ const DONATION_ELIGIBILITY_MONTHS = Number(process.env.DONATION_ELIGIBILITY_MONT
 if (!Number.isInteger(DONATION_ELIGIBILITY_MONTHS) ||
     DONATION_ELIGIBILITY_MONTHS < 1 || DONATION_ELIGIBILITY_MONTHS > 24) {
   throw new Error('DONATION_ELIGIBILITY_MONTHS must be an integer between 1 and 24.');
+}
+
+async function saveInAppNotification(executor, notification) {
+  const payload = createNotificationPayload(notification);
+  if (!payload) throw new Error('Invalid in-app notification payload.');
+  await executor.execute(
+    `INSERT IGNORE INTO in_app_notifications
+       (recipient_user_id, recipient_admin_id, title, message, notification_type,
+        related_request_id, dedupe_key, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())`,
+    [payload.recipient_user_id, payload.recipient_admin_id, payload.title,
+      payload.message, payload.notification_type, payload.related_request_id,
+      payload.dedupe_key]
+  );
+}
+
+async function saveAdminNotifications(executor, notification) {
+  const payload = createNotificationPayload({ ...notification, recipientAdminId: 1 });
+  if (!payload) throw new Error('Invalid admin in-app notification payload.');
+  await executor.execute(
+    `INSERT IGNORE INTO in_app_notifications
+       (recipient_admin_id, title, message, notification_type, related_request_id,
+        dedupe_key, created_at)
+     SELECT admin_id, ?, ?, ?, ?, ?, UTC_TIMESTAMP()
+     FROM admin_users`,
+    [payload.title, payload.message, payload.notification_type,
+      payload.related_request_id, payload.dedupe_key]
+  );
 }
 const DONOR_RESPONSE_WINDOW_MINUTES = Number(process.env.DONOR_RESPONSE_WINDOW_MINUTES || 120);
 if (!Number.isInteger(DONOR_RESPONSE_WINDOW_MINUTES) ||
@@ -484,7 +516,7 @@ function serveAccountDashboard(role, filename) {
       const dashboardByRole = {
         donor: '/donar-dashboard.html',
         patient: '/patient-dashboard.html',
-        blood_bank: '/blood-bank-review.html'
+        blood_bank: '/blood-bank-portal.html'
       };
       return res.redirect(dashboardByRole[req.user.role] || '/login');
     }
@@ -501,12 +533,17 @@ app.get('/donor-eligibility.html', requireDatabase, requireDashboardSession, (re
 });
 app.get('/patient-dashboard.html', requireDatabase, requireDashboardSession, serveAccountDashboard('patient', 'patient-dashboard.html'));
 app.get('/blood-bank-review.html', requireDatabase, requireDashboardSession, (req, res) => {
-  if (req.user.role !== 'blood_bank') return res.sendStatus(403);
+  if (req.user.role !== 'blood_bank') return res.redirect('/login');
   res.set('Cache-Control', 'no-store');
   res.sendFile(path.join(__dirname, 'blood-bank-review.html'));
 });
+app.get('/blood-bank-portal.html', requireDatabase, requireDashboardSession,
+  serveAccountDashboard('blood_bank', 'blood-bank-portal.html'));
 app.get('/blood-bank-review.js', (req, res) => {
   res.sendFile(path.join(__dirname, 'blood-bank-review.js'));
+});
+app.get('/blood-bank-portal.js', (req, res) => {
+  res.sendFile(path.join(__dirname, 'blood-bank-portal.js'));
 });
 app.get('/dashboard.js', (req, res) => {
   res.sendFile(path.join(__dirname, 'dashboard.js'));
@@ -716,6 +753,31 @@ async function initializeDonationCoordinationSchema(userIdType) {
         REFERENCES users (user_id) ON DELETE RESTRICT,
       CONSTRAINT fk_donation_correction_admin FOREIGN KEY (corrected_by_admin_id)
         REFERENCES admin_users (admin_id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await db.query(
+    `CREATE TABLE IF NOT EXISTS in_app_notifications (
+      notification_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      recipient_user_id ${userIdType} NULL,
+      recipient_admin_id TINYINT UNSIGNED NULL,
+      title VARCHAR(120) NOT NULL,
+      message VARCHAR(500) NOT NULL,
+      notification_type VARCHAR(40) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      read_at DATETIME NULL,
+      related_request_id ${PORTAL_SCHEMA ? 'INT' : 'BIGINT UNSIGNED'} NULL,
+      dedupe_key VARCHAR(160) NOT NULL,
+      PRIMARY KEY (notification_id),
+      UNIQUE KEY uq_user_notification_dedupe (recipient_user_id, dedupe_key),
+      UNIQUE KEY uq_admin_notification_dedupe (recipient_admin_id, dedupe_key),
+      KEY idx_user_notifications_unread (recipient_user_id, read_at, created_at),
+      KEY idx_admin_notifications_unread (recipient_admin_id, read_at, created_at),
+      CONSTRAINT fk_notification_recipient_user FOREIGN KEY (recipient_user_id)
+        REFERENCES users (user_id) ON DELETE RESTRICT,
+      CONSTRAINT fk_notification_recipient_admin FOREIGN KEY (recipient_admin_id)
+        REFERENCES admin_users (admin_id) ON DELETE RESTRICT,
+      CONSTRAINT fk_notification_request FOREIGN KEY (related_request_id)
+        REFERENCES blood_requests (request_id) ON DELETE RESTRICT
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
   );
   await db.query(
@@ -1698,6 +1760,35 @@ app.post('/api/blood-requests', rateLimit(5, 15 * 60 * 1000), requireDatabase, r
       );
       matchedDonorCount = matches.affectedRows;
     }
+    await saveInAppNotification(connection, {
+      recipientUserId: req.user.user_id,
+      title: 'Emergency request received',
+      message: `Your ${bloodGroup} blood request was submitted and is awaiting coordination.`,
+      type: 'request_submitted',
+      relatedRequestId: Number(result.insertId),
+      dedupeKey: `request-submitted:${result.insertId}`
+    });
+    await saveAdminNotifications(connection, {
+      title: 'New emergency blood request',
+      message: `A ${bloodGroup} blood request was submitted for ${city}, ${state}.`,
+      type: 'admin_request',
+      relatedRequestId: Number(result.insertId),
+      dedupeKey: `new-request:${result.insertId}`
+    });
+    await connection.execute(
+      `INSERT IGNORE INTO in_app_notifications
+         (recipient_user_id, title, message, notification_type, related_request_id,
+          dedupe_key, created_at)
+       SELECT dr.donor_user_id, 'Relevant emergency blood request',
+              CONCAT('A request for ', r.blood_group, ' blood needs assistance in ',
+                     r.city, '. Sign in to review the details.'),
+              'emergency_request', r.request_id,
+              CONCAT('emergency-request:', r.request_id), UTC_TIMESTAMP()
+       FROM donor_request_responses dr
+       JOIN blood_requests r ON r.request_id = dr.request_id
+       WHERE dr.request_id = ?`,
+      [result.insertId]
+    );
     const [matchingBanks] = await connection.execute(
       `SELECT b.blood_bank_id, b.bank_name, b.address_text, b.phone, b.city, b.district, b.state,
               s.available_units,
@@ -1969,7 +2060,7 @@ app.post('/api/blood-bank/emergency-requests/:requestId/status', requireDatabase
     try {
       await connection.beginTransaction();
       const [[request]] = await connection.execute(
-        `SELECT request_id, coordination_status, coordinator_bank_id
+        `SELECT request_id, user_id, coordination_status, coordinator_bank_id
          FROM blood_requests WHERE request_id = ? FOR UPDATE`,
         [requestId]
       );
@@ -2022,7 +2113,7 @@ app.post('/api/blood-bank/emergency-requests/:requestId/status', requireDatabase
          WHERE request_id = ?`,
         [status, req.user.user_id, req.bloodBank.bank_id, requestId]
       );
-      await connection.execute(
+      const [eventResult] = await connection.execute(
         `INSERT INTO blood_request_events
            (request_id, actor_user_id, event_type, previous_status, new_status, details)
          VALUES (?, ?, 'coordination_status', ?, ?, ?)`,
@@ -2030,6 +2121,14 @@ app.post('/api/blood-bank/emergency-requests/:requestId/status', requireDatabase
           JSON.stringify({ bank_id: req.bloodBank.bank_id, bank_name: req.bloodBank.bank_name,
             fulfillment_confirmed: status === 'Fulfilled' })]
       );
+      await saveInAppNotification(connection, {
+        recipientUserId: request.user_id,
+        title: 'Blood request status updated',
+        message: `An authorized blood-bank staff member updated your request to ${status}.`,
+        type: 'request_status',
+        relatedRequestId: Number(requestId),
+        dedupeKey: `request-status-event:${eventResult.insertId}`
+      });
       await connection.commit();
       res.json({
         request_id: requestId,
@@ -2104,8 +2203,222 @@ async function notifyAdditionalMatchingDonors(requestId) {
        )`,
     [DONOR_RESPONSE_WINDOW_MINUTES, ...compatibleBloodGroups, requestId]
   );
+  if (result.affectedRows) {
+    await db.execute(
+      `INSERT IGNORE INTO in_app_notifications
+         (recipient_user_id, title, message, notification_type, related_request_id,
+          dedupe_key, created_at)
+       SELECT dr.donor_user_id, 'Relevant emergency blood request',
+              CONCAT('A request for ', r.blood_group, ' blood needs assistance in ',
+                     r.city, '. Sign in to review the details.'),
+              'emergency_request', r.request_id,
+              CONCAT('emergency-request:', r.request_id), UTC_TIMESTAMP()
+       FROM donor_request_responses dr
+       JOIN blood_requests r ON r.request_id = dr.request_id
+       WHERE dr.request_id = ?`,
+      [requestId]
+    );
+  }
   return result.affectedRows;
 }
+
+async function createDonorReminderNotifications(userId) {
+  await db.execute(
+    `INSERT IGNORE INTO in_app_notifications
+       (recipient_user_id, title, message, notification_type, dedupe_key, created_at)
+     SELECT d.user_id, 'Eligibility review is due',
+            'Your configured recovery interval has passed. Please review your eligibility portal and request qualified staff review.',
+            'eligibility_review_due',
+            CONCAT('eligibility-review-due:', d.user_id, ':',
+              DATE_FORMAT(COALESCE(d.next_eligible_date,
+                DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)), '%Y-%m-%d')),
+            UTC_TIMESTAMP()
+     FROM donors d
+     WHERE d.user_id = ?
+       AND d.last_donation_date IS NOT NULL
+       AND COALESCE(d.next_eligible_date,
+         DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)) <= UTC_DATE()
+       AND NOT (${DONOR_ELIGIBILITY_SQL})`,
+    [userId]
+  );
+  await db.execute(
+    `INSERT IGNORE INTO in_app_notifications
+       (recipient_user_id, title, message, notification_type, dedupe_key, created_at)
+     SELECT d.user_id, 'Please reconfirm your availability',
+            'Your previous availability confirmation has expired. Update your availability if you are ready to be considered for matching.',
+            'availability_reconfirmation',
+            CONCAT('availability-reconfirm:', d.user_id, ':',
+              DATE_FORMAT(d.last_confirmed_at, '%Y%m%d%H%i%s')),
+            UTC_TIMESTAMP()
+     FROM donors d
+     WHERE d.user_id = ?
+       AND d.available = 1
+       AND d.last_confirmed_at IS NOT NULL
+       AND (
+         (COALESCE(d.availability_mode, 'general') = 'general'
+           AND d.availability_expires_at <= UTC_TIMESTAMP())
+         OR
+         (COALESCE(d.availability_mode, 'general') = 'selected_dates'
+           AND NOT EXISTS (
+             SELECT 1 FROM donor_availability_dates ad
+             WHERE ad.donor_user_id = d.user_id
+               AND ad.status = 'available'
+               AND ad.available_date >= UTC_DATE()
+           ))
+       )`,
+    [userId]
+  );
+}
+
+app.get('/api/notifications', requireDatabase, requireSession, async (req, res) => {
+  if (!['donor', 'patient'].includes(req.user.role)) {
+    return res.status(403).json({ message: 'Notifications are not available for this account.' });
+  }
+  try {
+    if (req.user.role === 'donor') {
+      await createDonorReminderNotifications(req.user.user_id);
+    }
+    const [[count], [notifications]] = await Promise.all([
+      db.execute(
+        'SELECT COUNT(*) AS unread_count FROM in_app_notifications WHERE recipient_user_id = ? AND read_at IS NULL',
+        [req.user.user_id]
+      ),
+      db.execute(
+        `SELECT notification_id, title, message, notification_type,
+                DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at,
+                DATE_FORMAT(read_at, '%Y-%m-%dT%H:%i:%sZ') AS read_at,
+                related_request_id
+         FROM in_app_notifications
+         WHERE recipient_user_id = ?
+         ORDER BY created_at DESC, notification_id DESC
+         LIMIT 100`,
+        [req.user.user_id]
+      )
+    ]);
+    res.set('Cache-Control', 'no-store');
+    res.json({ unread_count: Number(count[0].unread_count), notifications });
+  } catch (error) {
+    console.error('In-app notification lookup failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not load your notifications.' });
+  }
+});
+
+app.post('/api/notifications/:notificationId/read', requireDatabase, requireSession,
+  rateLimit(120, 60 * 60 * 1000), async (req, res) => {
+    if (!['donor', 'patient'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Notifications are not available for this account.' });
+    }
+    const notificationId = req.params.notificationId;
+    if (!isValidNotificationId(notificationId)) {
+      return res.status(400).json({ message: 'Choose a valid notification.' });
+    }
+    try {
+      const [result] = await db.execute(
+        `UPDATE in_app_notifications
+         SET read_at = COALESCE(read_at, UTC_TIMESTAMP())
+         WHERE notification_id = ? AND recipient_user_id = ?`,
+        [notificationId, req.user.user_id]
+      );
+      if (!result.affectedRows) {
+        const [owned] = await db.execute(
+          `SELECT notification_id FROM in_app_notifications
+           WHERE notification_id = ? AND recipient_user_id = ? LIMIT 1`,
+          [notificationId, req.user.user_id]
+        );
+        if (!owned.length) return res.status(404).json({ message: 'Notification not found.' });
+      }
+      res.json({ message: 'Notification marked as read.' });
+    } catch (error) {
+      console.error('In-app notification read update failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not update the notification.' });
+    }
+  });
+
+app.get('/api/admin/notifications', requireDatabase, requireAdminConfigured, requireAdmin,
+  async (req, res) => {
+    try {
+      await db.execute(
+        `INSERT IGNORE INTO in_app_notifications
+           (recipient_admin_id, title, message, notification_type, dedupe_key, created_at)
+         SELECT a.admin_id, 'Donor eligibility review requested',
+                'A donor eligibility review request is awaiting admin handling.',
+                'eligibility_review_request',
+                CONCAT('eligibility-request:', r.request_id), UTC_TIMESTAMP()
+         FROM admin_users a
+         JOIN donor_eligibility_review_requests r ON r.request_status = 'pending'`
+      );
+      await db.execute(
+        `INSERT IGNORE INTO in_app_notifications
+           (recipient_admin_id, title, message, notification_type, dedupe_key, created_at)
+         SELECT a.admin_id, 'Blood bank daily update missing',
+                CONCAT(b.bank_name, ' had not submitted a stock update for ', DATE_FORMAT(UTC_DATE(), '%Y-%m-%d'), ' (UTC) when this alert was generated.'),
+                'blood_bank_stock_missing',
+                CONCAT('missing-stock:', b.blood_bank_id, ':', DATE_FORMAT(UTC_DATE(), '%Y-%m-%d')),
+                UTC_TIMESTAMP()
+         FROM admin_users a
+         CROSS JOIN blood_banks b
+         WHERE b.is_active = 1
+           AND (b.verification_status = 'verified' OR b.verified = 1)
+           AND NOT EXISTS (
+             SELECT 1 FROM blood_stock s
+             WHERE s.blood_bank_id = b.blood_bank_id
+               AND s.last_updated >= UTC_DATE()
+               AND s.last_updated < DATE_ADD(UTC_DATE(), INTERVAL 1 DAY)
+           )`
+      );
+      const [[count], [notifications]] = await Promise.all([
+        db.execute(
+          'SELECT COUNT(*) AS unread_count FROM in_app_notifications WHERE recipient_admin_id = ? AND read_at IS NULL',
+          [req.admin.admin_id]
+        ),
+        db.execute(
+          `SELECT notification_id, title, message, notification_type,
+                  DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at,
+                  DATE_FORMAT(read_at, '%Y-%m-%dT%H:%i:%sZ') AS read_at,
+                  related_request_id
+           FROM in_app_notifications
+           WHERE recipient_admin_id = ?
+           ORDER BY created_at DESC, notification_id DESC
+           LIMIT 100`,
+          [req.admin.admin_id]
+        )
+      ]);
+      res.set('Cache-Control', 'no-store');
+      res.json({ unread_count: Number(count[0].unread_count), notifications });
+    } catch (error) {
+      console.error('Admin in-app notification lookup failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not load admin notifications.' });
+    }
+  }
+);
+
+app.post('/api/admin/notifications/:notificationId/read', requireDatabase,
+  requireAdminConfigured, requireAdmin, rateLimit(120, 60 * 60 * 1000), async (req, res) => {
+    const notificationId = req.params.notificationId;
+    if (!isValidNotificationId(notificationId)) {
+      return res.status(400).json({ message: 'Choose a valid notification.' });
+    }
+    try {
+      const [result] = await db.execute(
+        `UPDATE in_app_notifications
+         SET read_at = COALESCE(read_at, UTC_TIMESTAMP())
+         WHERE notification_id = ? AND recipient_admin_id = ?`,
+        [notificationId, req.admin.admin_id]
+      );
+      if (!result.affectedRows) {
+        const [owned] = await db.execute(
+          `SELECT notification_id FROM in_app_notifications
+           WHERE notification_id = ? AND recipient_admin_id = ? LIMIT 1`,
+          [notificationId, req.admin.admin_id]
+        );
+        if (!owned.length) return res.status(404).json({ message: 'Notification not found.' });
+      }
+      res.json({ message: 'Notification marked as read.' });
+    } catch (error) {
+      console.error('Admin notification read update failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not update the notification.' });
+    }
+  });
 
 app.get(['/api/donor/notifications', '/api/donor/emergency-requests'],
   requireDatabase, requireSession, async (req, res) => {
@@ -2318,6 +2631,26 @@ app.post('/api/donor/emergency-requests/:requestId/response', requireDatabase, r
         }
         return res.status(409).json({ message: 'You have already responded, or this request is no longer active.' });
       }
+      let patientNotificationFailed = false;
+      try {
+        await db.execute(
+          `INSERT IGNORE INTO in_app_notifications
+             (recipient_user_id, title, message, notification_type, related_request_id,
+              dedupe_key, created_at)
+           SELECT r.user_id, 'Donor response received',
+                  CONCAT('A matched donor responded to your request: ',
+                    CASE ? WHEN 'can_help' THEN 'available to help'
+                      WHEN 'busy' THEN 'busy' ELSE 'unable to help' END, '.'),
+                  'donor_response', r.request_id,
+                  CONCAT('donor-response:', r.request_id, ':', ?), UTC_TIMESTAMP()
+           FROM blood_requests r
+           WHERE r.request_id = ?`,
+          [response, req.user.user_id, requestId]
+        );
+      } catch (error) {
+        patientNotificationFailed = true;
+        console.error('Patient donor-response notification failed:', error.code || error.message);
+      }
       let additionalNotifications = 0;
       let additionalMatchingFailed = false;
       if (response !== 'can_help') {
@@ -2329,9 +2662,11 @@ app.post('/api/donor/emergency-requests/:requestId/response', requireDatabase, r
         }
       }
       res.json({
-        message: response === 'can_help'
-          ? 'Your response was saved. The patient must still coordinate with the hospital.'
-          : additionalMatchingFailed
+        message: patientNotificationFailed
+          ? 'Your response was saved, but the patient notification could not be saved.'
+          : response === 'can_help'
+            ? 'Your response was saved. The patient must still coordinate with the hospital.'
+            : additionalMatchingFailed
             ? 'Your response was saved, but additional donor matching could not be completed.'
             : additionalNotifications
               ? `Your response was saved. ${additionalNotifications} additional matching donor notification(s) were created.`
@@ -4399,6 +4734,12 @@ app.post('/api/donor/eligibility-review-requests', requireDatabase, requireSessi
          VALUES (?, 'pending', UTC_TIMESTAMP())`,
         [req.user.user_id]
       );
+      await saveAdminNotifications(connection, {
+        title: 'Donor eligibility review requested',
+        message: 'A donor eligibility review request is awaiting admin handling.',
+        type: 'eligibility_review_request',
+        dedupeKey: `eligibility-request:${result.insertId}`
+      });
       await connection.commit();
       res.status(201).json({
         request_id: Number(result.insertId),
@@ -4706,10 +5047,12 @@ app.post('/api/blood-bank/donors/:donorId/eligibility', requireDatabase, require
   }
 );
 
-function formatBloodStockRow(row, requiredUnits = 0) {
-  const stale = !isStockFreshForUtcDate(row.last_updated);
+function formatBloodStockRow(row, requiredUnits = 0, includeStaffReportedQuantities = false) {
+  const hasStockRecord = row.stock_id !== null;
+  const stale = !hasStockRecord || !isStockFreshForUtcDate(row.last_updated);
   const verified = row.verification_status === 'verified';
-  const availableUnits = verified && !stale && row.stock_id !== null
+  const exposeQuantities = hasStockRecord && (includeStaffReportedQuantities || (verified && !stale));
+  const availableUnits = exposeQuantities
     ? Number(row.available_units)
     : null;
   const threshold = Number(row.threshold || 0);
@@ -4725,24 +5068,25 @@ function formatBloodStockRow(row, requiredUnits = 0) {
     state: row.state,
     blood_group: row.blood_group,
     component: row.component,
-    physical_units: verified && !stale && row.stock_id !== null ? Number(row.physical_units) : null,
-    reserved_units: verified && !stale && row.stock_id !== null ? Number(row.reserved_units) : null,
-    issued_units: verified && !stale && row.stock_id !== null ? Number(row.issued_units) : null,
-    discarded_units: verified && !stale && row.stock_id !== null ? Number(row.discarded_units) : null,
-    total_eligible_units: verified && !stale && row.stock_id !== null ? Number(row.total_eligible_units) : null,
+    physical_units: exposeQuantities ? Number(row.physical_units) : null,
+    reserved_units: exposeQuantities ? Number(row.reserved_units) : null,
+    issued_units: exposeQuantities ? Number(row.issued_units) : null,
+    discarded_units: exposeQuantities ? Number(row.discarded_units) : null,
+    total_eligible_units: exposeQuantities ? Number(row.total_eligible_units) : null,
     available_units: availableUnits,
     threshold,
     meets_requested_units: availableUnits !== null && availableUnits >= requiredUnits,
     last_updated: row.last_updated,
     stock_date: row.last_updated ? new Date(row.last_updated).toISOString().slice(0, 10) : null,
     verification_status: row.verification_status || 'pending',
-    status: getStockStatus({
+    status: hasStockRecord ? getStockStatus({
       available: availableUnits ?? 0,
       threshold,
-      verified: verified && row.stock_id !== null,
+      verified,
       stale,
       requiredUnits
-    }),
+    }) : 'No update today',
+    is_fresh_today: hasStockRecord && !stale,
     freshness_policy: 'UTC calendar day'
   };
 }
@@ -4889,6 +5233,7 @@ async function recordBloodStockUpdate(req, res) {
       available_units: calculated.available,
       verification_status: 'pending',
       last_updated: saved.last_updated,
+      stock_date: saved.last_updated ? new Date(saved.last_updated).toISOString().slice(0, 10) : null,
       status: getStockStatus({
         available: calculated.available,
         threshold: lowStockThreshold,
@@ -5190,7 +5535,11 @@ app.get('/api/blood-bank/inventory', requireDatabase, requireSession,
       res.set('Cache-Control', 'no-store');
       res.json({
         bank: { ...req.bloodBank, bank_id: req.bloodBank.bank_id },
-        inventory: inventory.map(row => formatBloodStockRow({ ...row, ...req.bloodBank, blood_bank_id: req.bloodBank.bank_id })),
+        inventory: inventory.map(row => formatBloodStockRow(
+          { ...row, ...req.bloodBank, blood_bank_id: req.bloodBank.bank_id },
+          0,
+          true
+        )),
         history,
         alerts,
         audit,

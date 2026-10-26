@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "check": "node --check server.js && node --check app.js && node --check login.js && node --check admin.js && node --check dashboard.js && node --check blood-bank-review.js && node --check donor-eligibility.js && node --check eligibility-portal-utils.js && node --check donation-date.js && node --check stock-utils.js",
+    "check": "node --check server.js && node --check app.js && node --check login.js && node --check admin.js && node --check dashboard.js && node --check blood-bank-review.js && node --check blood-bank-portal.js && node --check donor-eligibility.js && node --check eligibility-portal-utils.js && node --check notification-center.js && node --check notification-utils.js && node --check donation-date.js && node --check stock-utils.js",
     "test": "node --test"
   },
   "type": "commonjs",

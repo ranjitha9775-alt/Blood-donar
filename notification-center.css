@@ -1,0 +1,62 @@
+.notification-widget { position: relative; }
+.notification-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 42px;
+  padding: 0 11px;
+  border: 1px solid var(--line, #e4e7ed);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--ink, #20232b);
+  font: inherit;
+  cursor: pointer;
+}
+.notification-toggle svg { width: 20px; height: 20px; }
+.notification-count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: #c6283d;
+  color: white;
+  font-size: 12px;
+  font-weight: 750;
+  text-align: center;
+}
+.notification-panel {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 9px);
+  right: 0;
+  width: min(390px, calc(100vw - 24px));
+  max-height: min(70vh, 560px);
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--line, #e4e7ed);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 12px 36px #20232b24;
+}
+.notification-panel h2 { margin: 0; font-size: 18px; }
+.notification-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.notification-panel-message { color: var(--muted, #687080); font-size: 13px; }
+.notification-item { padding: 12px 0; border-top: 1px solid var(--line, #e4e7ed); }
+.notification-item.unread { border-left: 3px solid #c6283d; padding-left: 10px; }
+.notification-item h3 { margin: 0; font-size: 15px; }
+.notification-item p { margin: 5px 0; overflow-wrap: anywhere; }
+.notification-item time, .notification-state { color: var(--muted, #687080); font-size: 12px; }
+.notification-item .notification-mark-read {
+  min-height: 34px;
+  margin-top: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--line, #e4e7ed);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--ink, #20232b);
+  font: inherit;
+  cursor: pointer;
+}
+.notification-item .notification-mark-read:disabled { opacity: .6; cursor: wait; }
+@media (max-width: 520px) {
+  .notification-panel { position: fixed; top: 70px; right: 12px; max-height: calc(100vh - 90px); }
+}

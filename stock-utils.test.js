@@ -22,8 +22,9 @@ test("rejects stock outflows above physical count", () => {
 });
 
 test("does not report stale or unverified figures as current", () => {
-  assert.equal(getStockStatus({ available: 20, threshold: 5, verified: false, stale: false }), "Availability Unconfirmed");
-  assert.equal(getStockStatus({ available: 20, threshold: 5, verified: true, stale: true }), "Update Required");
+  assert.equal(getStockStatus({ available: 20, threshold: 5, verified: false, stale: false }), "Pending Verification");
+  assert.equal(getStockStatus({ available: 20, threshold: 5, verified: true, stale: true }), "Outdated");
+  assert.equal(getStockStatus({ available: 20, threshold: 5, verified: false, stale: true }), "Outdated");
   assert.equal(getStockStatus({ available: 0, threshold: 5, verified: true, stale: false }), "Out of Stock");
   assert.equal(getStockStatus({ available: 4, threshold: 5, verified: true, stale: false }), "Low Stock");
 });
