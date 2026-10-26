@@ -19,6 +19,10 @@
     h1 { margin: 0 0 4px; font-size: clamp(26px, 5vw, 34px); }
     h2 { margin: 0; font-size: 21px; }
     .muted { color: var(--muted); }
+    .field { display: grid; gap: 6px; margin: 12px 0; }
+    .field label { font-size: 13px; font-weight: 700; }
+    input, select, textarea { min-height: 42px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); font: inherit; }
+    textarea { min-height: 84px; resize: vertical; }
     .card { margin-top: 20px; padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: #fff; box-shadow: 0 8px 28px #20232b0a; }
     .status-panel { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px; margin: 18px 0; padding: 15px; border-radius: 12px; background: #f7f8fa; }
     .status-label { display: inline-block; padding: 5px 10px; border-radius: 999px; background: #e7e9ee; font-weight: 750; }
@@ -60,6 +64,15 @@
     <h1>Donor dashboard</h1>
     <p class="muted" id="welcome">Checking your login…</p>
 
+    <section class="card" id="donationHistoryCard" aria-labelledby="donationHistoryTitle" hidden>
+      <h2 id="donationHistoryTitle">Donation History</h2>
+      <p class="muted" id="donationHistorySummary">Loading donation history…</p>
+      <p class="muted" id="donationEligibilitySummary" aria-live="polite">Loading eligibility status…</p>
+      <a class="button-secondary" href="/donor-eligibility.html">Donor Eligibility Portal</a>
+      <div id="donationHistoryRows" aria-live="polite"></div>
+      <p class="safety">The initial interval is configurable and is not a medical eligibility decision. A qualified medical professional must confirm eligibility before matching resumes.</p>
+    </section>
+
     <section class="card" id="profileLocationCard" aria-labelledby="profileLocationTitle" hidden>
       <h2 id="profileLocationTitle">My Profile Location</h2>
       <p class="muted">Patient search uses this registered location, not live GPS. Keep it current so matching patients can find your city and area when you opt in to sharing them.</p>
@@ -82,6 +95,7 @@
       <div class="choice-list" aria-label="Set donation availability">
         <button id="availableToDonate" class="choice available" type="button" aria-pressed="false">Available to Donate</button>
         <button id="notAvailable" class="choice not-available" type="button" aria-pressed="false">Not Available</button>
+        <button id="temporarilyUnavailable" class="choice not-available" type="button" aria-pressed="false">Temporarily Unavailable</button>
       </div>
       <div>
         <div class="field">
@@ -119,8 +133,16 @@
         <div class="field"><label for="feelingWell">Are you feeling well today?</label><select id="feelingWell" name="feelingWell" required><option value="">Choose</option><option value="yes">Yes</option><option value="no">No</option><option value="not_sure">Not sure</option></select></div>
         <div class="field"><label for="recentIllness">Have you recently had an illness or fever?</label><select id="recentIllness" name="recentIllness" required><option value="">Choose</option><option value="yes">Yes</option><option value="no">No</option><option value="not_sure">Not sure</option></select></div>
         <div class="field"><label for="takingMedication">Are you currently taking medication?</label><select id="takingMedication" name="takingMedication" required><option value="">Choose</option><option value="yes">Yes</option><option value="no">No</option><option value="not_sure">Not sure</option></select></div>
+        <div class="field"><label for="medicationName">Medication name (optional)</label><input id="medicationName" name="medicationName" maxlength="150" autocomplete="off"></div>
+        <div class="field"><label for="receivingTreatment">Are you currently receiving medical treatment?</label><select id="receivingTreatment" name="receivingTreatment" required><option value="">Choose</option><option value="yes">Yes</option><option value="no">No</option><option value="not_sure">Not sure</option></select></div>
+        <div class="field"><label for="weightKg">Weight (kg)</label><input id="weightKg" name="weightKg" type="number" min="0.01" max="500" step="0.01" required></div>
+        <div class="field"><label for="systolic">Blood pressure systolic (mmHg)</label><input id="systolic" name="systolic" type="number" min="1" max="999" step="1" required></div>
+        <div class="field"><label for="diastolic">Blood pressure diastolic (mmHg)</label><input id="diastolic" name="diastolic" type="number" min="1" max="999" step="1" required></div>
+        <div class="field"><label for="healthConditions">Relevant health conditions or medical history</label><textarea id="healthConditions" name="healthConditions" maxlength="1000"></textarea></div>
+        <div class="field"><label for="temporaryIllness">Temporary illness or other screening information</label><textarea id="temporaryIllness" name="temporaryIllness" maxlength="1000"></textarea></div>
         <div class="field"><label for="previouslyDeferred">Have you previously been deferred from donating?</label><select id="previouslyDeferred" name="previouslyDeferred" required><option value="">Choose</option><option value="yes">Yes</option><option value="no">No</option><option value="not_sure">Not sure</option></select></div>
         <div class="field"><label for="screeningLastDonationDate">Last donation date (optional)</label><input id="screeningLastDonationDate" name="screeningLastDonationDate" type="date"></div>
+        <label class="consent"><input id="healthDataConsent" name="healthDataConsent" type="checkbox" required><span>I consent to LifeDrop collecting and using these health details for donor screening. They are private and visible only to me and authorized blood-bank personnel. Qualified medical staff make the final eligibility decision.</span></label>
         <button type="submit" id="submitHealthScreening">Submit screening for review</button>
         <p class="message" id="healthScreeningMessage" aria-live="polite"></p>
       </form>
@@ -131,7 +153,7 @@
         <h2 id="emergencyRequestsTitle">In-app Notifications</h2>
         <span id="unreadNotificationCount" class="status-label needs-confirmation" aria-live="polite" hidden>0 unread</span>
       </div>
-      <p class="muted">Emergency request history appears here when you are confirmed available and have opted into matching. There are no email, SMS, or push notifications configured. Your response is not a promise to arrive.</p>
+      <p class="muted">Emergency request history appears here when you are confirmed available and have opted into matching. These notifications are stored in LifeDrop; no SMS or push notification is sent. Your response is not a promise to arrive.</p>
       <div class="safety">For urgent needs, patients should contact their hospital or blood bank immediately. Exact blood-group matching is not a medical compatibility check. LifeDrop does not verify requests or guarantee blood availability.</div>
       <div id="emergencyRequests" aria-live="polite">Loading requests…</div>
       <p class="message" id="emergencyRequestsMessage" aria-live="polite"></p>

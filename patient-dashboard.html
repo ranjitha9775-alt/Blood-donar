@@ -52,10 +52,11 @@
     <p class="muted" id="welcome">Checking your login…</p>
     <section class="card" aria-labelledby="donorSearchTitle">
       <h2 id="donorSearchTitle">Find blood · Live donor search</h2>
-      <p class="muted">Search by blood group, city/place, and state. Matches show the registered donor’s name and city/state only when availability is current and the donor has opted in to display their name. Phone numbers are shared only after the donor accepts a specific request and separately consents. Exact home addresses are never shown.</p>
+      <p class="muted">Search by blood group, city, area, and state. Matches show registered details only when availability is current and the donor has opted in. Phone numbers are shared only after the donor accepts a specific request and separately consents. Exact home addresses are never shown.</p>
       <form id="patientDonorSearchForm">
         <div class="search-grid">
           <div class="field"><label for="searchCity">City / place</label><input id="searchCity" value="Mysuru" required maxlength="80" placeholder="e.g. Bengaluru"></div>
+          <div class="field"><label for="searchArea">Area / locality (optional)</label><input id="searchArea" maxlength="100" placeholder="e.g. Kuvempunagar"></div>
           <div class="field"><label for="searchState">State</label><input id="searchState" value="Karnataka" required maxlength="80"></div>
           <div class="field"><label for="searchBloodGroup">Blood group needed</label><select id="searchBloodGroup" required><option value="">Choose group</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
         </div>
@@ -81,6 +82,8 @@
           <div class="field"><label for="requestCity">City</label><input id="requestCity" name="city" required maxlength="80" value="Mysuru"></div>
           <div class="field"><label for="requestDistrict">District / area</label><input id="requestDistrict" name="district" required maxlength="80" value="Mysuru"></div>
           <div class="field"><label for="requestUnits">Units required</label><input id="requestUnits" name="units" type="number" min="1" max="20" step="1" value="1" required></div>
+          <div class="field"><label for="requestComponent">Blood component</label><select id="requestComponent" name="component" required><option value="whole_blood">Whole blood</option><option value="red_cells">Red blood cells</option><option value="platelets">Platelets</option><option value="plasma">Plasma</option></select></div>
+          <div class="field"><label for="requestContactPhone">Contact phone</label><input id="requestContactPhone" name="contact_phone" type="tel" maxlength="20" required></div>
           <div class="field"><label for="requestUrgency">Urgency</label><select id="requestUrgency" name="urgency" required><option>Urgent</option><option>Within 24 hours</option><option>Planned</option></select></div>
           <div class="field"><label for="requestNeededAt">Needed by</label><input id="requestNeededAt" name="needed_at" type="datetime-local" required></div>
         </div>
@@ -88,7 +91,22 @@
         <label class="consent"><input name="consent" type="checkbox" required><span>I consent to securely storing and using these details to process this blood request. The hospital address and my contact details are not shared with matched donors.</span></label>
         <button id="sendEmergencyRequestButton" type="submit">Save request and notify matching donors</button>
         <p class="message" id="patientRequestMessage" aria-live="polite"></p>
+        <div id="requestMatchingBanks" aria-live="polite"></div>
       </form>
+    </section>
+    <section class="card" aria-labelledby="localInventoryTitle">
+      <h2 id="localInventoryTitle">Verified LifeDrop Blood Bank Stock</h2>
+      <p class="muted">Only staff-reported records from verified banks are shown here. Stale or unverified records are labelled; confirm availability directly with the bank. External official stock is a separate source.</p>
+      <button id="searchLocalInventory" type="button">Check matching bank stock</button>
+      <p class="message" id="localInventoryMessage" aria-live="polite">Choose a requested blood group and component to check.</p>
+      <div id="localInventoryResults" aria-live="polite"></div>
+      <p><a href="https://eraktkosh.mohfw.gov.in/eraktkoshPortal/" target="_blank" rel="noopener noreferrer">Open official e-RaktKosh portal</a></p>
+    </section>
+    <section class="card" id="patientRequestStatusCard" aria-labelledby="patientRequestStatusTitle" hidden>
+      <h2 id="patientRequestStatusTitle">Request Coordination Updates</h2>
+      <p class="muted">Updates appear only after an authorized coordinator or blood bank records them. Submitted, accepted, in-progress, and fulfilled are distinct states; submission does not mean an organization accepted the request.</p>
+      <div id="patientRequestStatuses" aria-live="polite">Loading requests…</div>
+      <p class="message" id="patientRequestStatusMessage" aria-live="polite"></p>
     </section>
     <section class="card" id="patientResponsesCard" aria-labelledby="patientResponsesTitle" hidden>
       <h2 id="patientResponsesTitle">Responses to your urgent requests</h2>

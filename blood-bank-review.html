@@ -22,7 +22,19 @@
     .answers { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; }
     .answer { padding: 10px; border-radius: 8px; background: #f7f8fa; }
     label { display: block; margin: 12px 0 5px; font-size: 13px; font-weight: 700; }
-    textarea { width: 100%; min-height: 72px; box-sizing: border-box; padding: 10px; border: 1px solid #dfe2e8; border-radius: 8px; font: inherit; }
+    textarea, input, select { width: 100%; min-height: 42px; box-sizing: border-box; padding: 10px; border: 1px solid #dfe2e8; border-radius: 8px; font: inherit; }
+    textarea { min-height: 72px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+    .request { padding: 14px 0; border-top: 1px solid #e7e9ed; }
+    .request:first-child { border-top: 0; }
+    .status { color: #656c78; font-size: 13px; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 14px 0; }
+    .stat { padding: 13px; border: 1px solid #e2e5ea; border-radius: 8px; }
+    .stat span { display: block; color: #656c78; font-size: 12px; }
+    .stat strong { display: block; margin-top: 5px; font-size: 22px; }
+    .stock-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .stock-table th, .stock-table td { padding: 9px; border-top: 1px solid #e7e9ed; text-align: left; }
+    .stock-wrap { overflow-x: auto; }
     .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
     .not-cleared { background: #545c68; }
     [hidden] { display: none !important; }
@@ -36,6 +48,52 @@
     <section class="card">
       <p id="reviewMessage" class="message" aria-live="polite">Checking staff access…</p>
       <div id="screenings" aria-live="polite"></div>
+    </section>
+    <section class="card" aria-labelledby="eligibilityTitle">
+      <h2 id="eligibilityTitle">Final Eligibility Decisions</h2>
+      <p class="muted">A decision is restricted to qualified personnel. The configured interval and self-reported screening do not replace clinical assessment.</p>
+      <p id="eligibilityMessage" class="message" aria-live="polite"></p>
+      <div id="eligibilityQueue" aria-live="polite"></div>
+    </section>
+    <section class="card" aria-labelledby="inventoryTitle">
+      <h2 id="inventoryTitle">Blood Bank Inventory</h2>
+      <p class="muted" id="bankIdentity">Loading assigned bank…</p>
+      <div class="stats" aria-label="Blood stock totals">
+        <article class="stat"><span>Available units</span><strong id="bankAvailableUnits">—</strong></article>
+        <article class="stat"><span>Stock groups</span><strong id="bankStockGroups">—</strong></article>
+        <article class="stat"><span>Last update</span><strong id="bankLastUpdated">—</strong></article>
+      </div>
+      <div id="stockAlerts" aria-live="polite"></div>
+      <form id="inventoryForm">
+        <div class="grid">
+          <div><label for="inventoryGroup">Blood group</label><select id="inventoryGroup" name="blood_group" required><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
+          <div><label for="inventoryComponent">Component</label><select id="inventoryComponent" name="component" required><option value="whole_blood">Whole blood</option><option value="red_cells">Packed red blood cells</option><option value="platelets">Platelets</option><option value="plasma">Plasma</option></select></div>
+          <div><label for="inventoryPhysical">Current physical stock</label><input id="inventoryPhysical" name="physical_units" type="number" min="0" max="100000" step="1" required></div>
+          <div><label for="inventoryReserved">Reserved units</label><input id="inventoryReserved" name="reserved_units" type="number" min="0" max="100000" step="1" value="0" required></div>
+          <div><label for="inventoryIssued">Issued units</label><input id="inventoryIssued" name="issued_units" type="number" min="0" max="100000" step="1" value="0" required></div>
+          <div><label for="inventoryDiscarded">Expired / discarded units</label><input id="inventoryDiscarded" name="discarded_units" type="number" min="0" max="100000" step="1" value="0" required></div>
+          <div><label for="inventoryRemarks">Remarks</label><input id="inventoryRemarks" name="remarks" maxlength="500"></div>
+        </div>
+        <p class="muted">Available = physical stock − issued − discarded − reserved. Updates are timestamped by the server and never reserve stock for a request.</p>
+        <button type="submit" id="saveInventory">Save daily stock update</button>
+        <p id="inventoryMessage" class="message" aria-live="polite"></p>
+      </form>
+      <div class="stock-wrap"><table class="stock-table"><thead><tr><th>Group</th><th>Component</th><th>Physical</th><th>Reserved</th><th>Issued</th><th>Discarded</th><th>Eligible</th><th>Available</th><th>Status</th><th>Updated</th></tr></thead><tbody id="inventoryRows"></tbody></table></div>
+      <h3>Daily stock update history</h3>
+      <div id="stockHistory" aria-live="polite"></div>
+      <h3>Recent inventory audit</h3>
+      <div id="inventoryAudit" aria-live="polite"></div>
+    </section>
+    <section class="card" aria-labelledby="bankNotificationsTitle">
+      <h2 id="bankNotificationsTitle">In-app Notifications</h2>
+      <p class="muted">Emergency requests and daily stock reminders are stored in LifeDrop. No external email or push provider is configured.</p>
+      <div id="bankNotifications" aria-live="polite"></div>
+    </section>
+    <section class="card" aria-labelledby="requestTitle">
+      <h2 id="requestTitle">Emergency Requests</h2>
+      <p class="muted">Requests are visible to the mapped bank by location or assignment. Acceptance is not fulfillment.</p>
+      <p id="bankRequestsMessage" class="message" aria-live="polite"></p>
+      <div id="bankRequests" aria-live="polite"></div>
     </section>
   </main>
   <script src="/blood-bank-review.js" defer></script>

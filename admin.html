@@ -103,6 +103,12 @@
         <article class="stat"><span>Donor accounts</span><strong id="donorCount">—</strong></article>
         <article class="stat"><span>Available now</span><strong id="availableDonorCount">—</strong></article>
         <article class="stat"><span>Not available</span><strong id="unavailableDonorCount">—</strong></article>
+        <article class="stat"><span>Temporarily unavailable</span><strong id="temporarilyUnavailableDonorCount">—</strong></article>
+        <article class="stat"><span>In cooldown</span><strong id="cooldownDonorCount">—</strong></article>
+        <article class="stat"><span>Awaiting eligibility review</span><strong id="awaitingEligibilityCount">—</strong></article>
+        <article class="stat"><span>Eligibility requests pending</span><strong id="pendingEligibilityRequestsCount">—</strong></article>
+        <article class="stat"><span>Stale availability</span><strong id="staleAvailabilityCount">—</strong></article>
+        <article class="stat"><span>Pending emergency requests</span><strong id="pendingEmergencyRequestCount">—</strong></article>
         <article class="stat"><span>Unconfirmed</span><strong id="unconfirmedDonorCount">—</strong></article>
         <article class="stat"><span>Expired</span><strong id="expiredDonorCount">—</strong></article>
         <article class="stat"><span>Patient accounts</span><strong id="patientCount">—</strong></article>
@@ -112,11 +118,59 @@
         <div class="data-heading"><h2 id="donorManagementTitle">Donor Management</h2><p class="muted">Registered donor profiles and current opt-in status</p></div>
         <div class="data-tools">
           <div class="filter-field"><label for="donorSearch">Search donors</label><input id="donorSearch" type="search" placeholder="Name, username, phone, city…"></div>
+          <div class="filter-field"><label for="donorCityFilter">City</label><input id="donorCityFilter" type="search" placeholder="All cities"></div>
           <div class="filter-field"><label for="donorBloodFilter">Blood group</label><select id="donorBloodFilter"><option value="">All blood groups</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
-          <div class="filter-field"><label for="donorAvailabilityFilter">Availability</label><select id="donorAvailabilityFilter"><option value="">All donors</option><option>Available</option><option>Not Available</option><option>Unconfirmed</option><option>Expired</option></select></div>
+          <div class="filter-field"><label for="donorAvailabilityFilter">Availability</label><select id="donorAvailabilityFilter"><option value="">All donors</option><option>Available</option><option>Not Available</option><option>Temporarily Unavailable</option><option>Unconfirmed</option><option>Expired</option></select></div>
+          <div class="filter-field"><label for="donorEligibilityFilter">Eligibility</label><select id="donorEligibilityFilter"><option value="">All statuses</option><option value="eligible">Eligible</option><option value="in_cooldown">In cooldown</option><option value="awaiting_review">Awaiting review</option></select></div>
           <span class="record-count" id="donorResultCount" aria-live="polite"></span>
         </div>
-        <div class="table-scroll"><table><thead><tr><th>Name</th><th>Username</th><th>Phone</th><th>Blood group</th><th>City</th><th>Area</th><th>Availability</th><th>Available until</th><th>Last confirmed</th><th>Email</th><th>Last donation</th><th>Registered</th><th>Saved availability dates</th></tr></thead><tbody id="donorRows"><tr><td colspan="13">Loading donor records…</td></tr></tbody></table></div>
+        <div class="table-scroll"><table><thead><tr><th>Name</th><th>Username</th><th>Phone</th><th>Blood group</th><th>City</th><th>Area</th><th>Availability</th><th>Available until</th><th>Last confirmed</th><th>Email</th><th>Last donation</th><th>Next review date</th><th>Eligibility</th><th>Latest eligibility review</th><th>Registered</th><th>Saved availability dates</th></tr></thead><tbody id="donorRows"><tr><td colspan="16">Loading donor records…</td></tr></tbody></table></div>
+      </section>
+      <section class="panel data-panel" id="donationManagement" aria-labelledby="donationManagementTitle">
+        <div class="data-heading"><h2 id="donationManagementTitle">Verified Donation History</h2><p class="muted">Recording a completed donation disables matching; it does not grant future eligibility.</p></div>
+        <form class="data-tools" id="donationForm">
+          <div class="filter-field"><label for="donationDonor">Donor</label><select id="donationDonor" name="donor_id" required></select></div>
+          <div class="filter-field"><label for="donationDate">Completed donation date</label><input id="donationDate" name="donation_date" type="date" required></div>
+          <div class="filter-field"><label for="donationNotes">Verification note</label><input id="donationNotes" name="notes" maxlength="500"></div>
+          <button class="button" id="recordDonation" type="submit">Record and verify</button>
+          <p class="message" id="donationMessage" aria-live="polite"></p>
+        </form>
+        <div class="table-scroll"><table><thead><tr><th>Donor</th><th>Blood group</th><th>Donation date</th><th>Interval months</th><th>Next interval date</th><th>Record status</th><th>Recorded / verified by</th><th>Verified at</th><th>Notes</th><th>Actions</th></tr></thead><tbody id="donationRows"><tr><td colspan="10">Loading donation history…</td></tr></tbody></table></div>
+        <h3>Donation date correction history</h3>
+        <div class="table-scroll"><table><thead><tr><th>Donor</th><th>Donation record</th><th>Previous date</th><th>Corrected date</th><th>Corrected by</th><th>Correction time</th><th>Reason</th></tr></thead><tbody id="donationCorrectionRows"><tr><td colspan="7">Loading correction history…</td></tr></tbody></table></div>
+      </section>
+      <section class="panel data-panel" id="eligibilityRequestManagement" aria-labelledby="eligibilityRequestTitle">
+        <div class="data-heading"><h2 id="eligibilityRequestTitle">Donor Eligibility Review Requests</h2><p class="muted">Admin approval accepts a request for qualified blood-bank review; it is not medical eligibility approval.</p></div>
+        <p class="message" id="eligibilityRequestMessage" aria-live="polite"></p>
+        <div class="table-scroll"><table><thead><tr><th>Donor</th><th>Blood group</th><th>Last donation</th><th>Expected review</th><th>Request date</th><th>Request status</th><th>Staff decision</th><th>Reviewed by / date</th><th>Instructions</th><th>Actions</th></tr></thead><tbody id="eligibilityRequestRows"><tr><td colspan="10">Loading review requests…</td></tr></tbody></table></div>
+        <h3>Eligibility decision history</h3>
+        <div class="table-scroll"><table><thead><tr><th>Donor</th><th>Blood group</th><th>Decision</th><th>Authorized staff</th><th>Review date</th><th>Instructions</th></tr></thead><tbody id="eligibilityDecisionRows"><tr><td colspan="6">Loading eligibility decisions…</td></tr></tbody></table></div>
+      </section>
+      <section class="panel data-panel" id="bloodStockManagement" aria-labelledby="bloodStockManagementTitle">
+        <div class="data-heading"><h2 id="bloodStockManagementTitle">Daily Blood Stock</h2><p class="muted">Only verified banks and recent staff-entered stock appear in public search.</p></div>
+        <p class="status-line" id="stockAdminMessage" aria-live="polite"></p>
+        <div class="data-tools">
+          <div class="filter-field"><label for="stockBankSelect">Verified bank</label><select id="stockBankSelect"></select></div>
+          <div class="filter-field"><label for="stockGroupSelect">Blood group</label><select id="stockGroupSelect"><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
+          <div class="filter-field"><label for="stockComponentSelect">Component</label><select id="stockComponentSelect"><option value="whole_blood">Whole blood</option><option value="red_cells">Packed red blood cells</option><option value="platelets">Platelets</option><option value="plasma">Plasma</option></select></div>
+          <div class="filter-field"><label for="stockThresholdInput">Low-stock threshold (units)</label><input id="stockThresholdInput" type="number" min="0" max="100000" step="1" value="0"></div>
+          <button class="button" id="saveStockThreshold" type="button">Save threshold</button>
+        </div>
+        <div class="table-scroll"><table><thead><tr><th>Blood bank</th><th>Location</th><th>Verification</th><th>Public directory</th><th>Daily update / review</th><th>Actions</th></tr></thead><tbody id="bloodBankRows"></tbody></table></div>
+        <h3>Authorized blood-bank staff</h3>
+        <div class="data-tools">
+          <div class="filter-field"><label for="bankStaffAccount">Existing blood-bank account</label><select id="bankStaffAccount"></select></div>
+          <button class="button" id="mapBankStaff" type="button">Assign to selected bank</button>
+        </div>
+        <div id="bankStaffRows" aria-live="polite"></div>
+        <h3>Current stock reports</h3>
+        <div class="table-scroll"><table><thead><tr><th>Blood bank</th><th>Location</th><th>Group</th><th>Component</th><th>Physical</th><th>Reserved</th><th>Issued</th><th>Discarded</th><th>Available</th><th>Status</th><th>Stock date / updated</th><th>Verification</th><th>Actions</th></tr></thead><tbody id="adminStockRows"></tbody></table></div>
+        <h3>Recent verified donations</h3>
+        <div id="recentVerifiedDonations" aria-live="polite"></div>
+        <h3>Unresolved stock alerts</h3>
+        <div id="stockAlertRows" aria-live="polite"></div>
+        <h3>Threshold change history</h3>
+        <div id="stockThresholdHistory" aria-live="polite"></div>
       </section>
       <section class="panel data-panel" id="patientManagement" aria-labelledby="patientManagementTitle">
         <div class="data-heading"><h2 id="patientManagementTitle">Patient Management</h2><p class="muted">Patient accounts and their blood request status</p></div>

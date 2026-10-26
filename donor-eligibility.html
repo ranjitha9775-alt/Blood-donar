@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#c6283d">
+  <title>Donor Eligibility Portal — LifeDrop</title>
+  <style>
+    :root { color-scheme: light; --red: #c6283d; --ink: #20232b; --muted: #687080; --line: #e4e7ed; --canvas: #f5f7fa; --green: #176c44; --amber: #75520a; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--canvas); color: var(--ink); font: 15px/1.55 system-ui, "Segoe UI", sans-serif; }
+    header { background: white; border-bottom: 1px solid var(--line); }
+    .nav, main { width: min(980px, calc(100% - 32px)); margin: auto; }
+    .nav { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    main { padding: 28px 0 56px; }
+    a { color: inherit; }
+    .brand { text-decoration: none; font-weight: 800; font-size: 20px; }
+    .brand span { color: var(--red); }
+    h1 { margin: 0; font-size: clamp(27px, 5vw, 36px); }
+    h2 { margin: 0 0 8px; font-size: 21px; }
+    .muted { color: var(--muted); }
+    .card { margin-top: 18px; padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: white; }
+    .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-top: 18px; }
+    .metric { padding: 14px; border-radius: 12px; background: #f8f9fb; }
+    .metric strong { display: block; font-size: 20px; }
+    .status { display: inline-block; padding: 5px 10px; border-radius: 999px; background: #fff3d6; color: var(--amber); font-weight: 750; }
+    .status.positive { background: #e7f5ed; color: var(--green); }
+    .progress-track { height: 12px; overflow: hidden; border-radius: 999px; background: #e8ebf0; }
+    .progress-fill { height: 100%; width: 0; background: var(--red); transition: width .2s ease; }
+    .checklist { display: grid; gap: 10px; padding: 0; list-style: none; }
+    .checklist label { display: flex; align-items: flex-start; gap: 10px; }
+    .checklist input { width: 18px; height: 18px; margin-top: 3px; accent-color: var(--red); }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+    button, .button { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 0 15px; border: 0; border-radius: 9px; background: var(--red); color: white; font: inherit; font-weight: 700; text-decoration: none; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: wait; }
+    .secondary { background: white; color: var(--ink); border: 1px solid var(--line); }
+    .notice { padding: 12px 14px; border-left: 3px solid #e1aa29; background: #fff8e6; color: #5c4a1d; }
+    .message { min-height: 22px; color: var(--muted); }
+    .history-row { padding: 12px 0; border-top: 1px solid var(--line); }
+    [hidden] { display: none !important; }
+    @media (max-width: 520px) { .card { padding: 17px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="nav">
+      <a class="brand" href="/donar-dashboard.html">Life<span>Drop</span> Donor</a>
+      <a href="/donar-dashboard.html">Back to donor dashboard</a>
+    </div>
+  </header>
+  <main>
+    <h1>Donor Eligibility Portal</h1>
+    <p class="muted">Your verified donation history, recovery-period tracker, and eligibility-review requests.</p>
+
+    <section class="card" aria-labelledby="statusTitle">
+      <h2 id="statusTitle">Eligibility summary</h2>
+      <span id="eligibilityStatus" class="status" aria-live="polite">Loading status…</span>
+      <div class="summary">
+        <div class="metric"><span class="muted">Last verified donation</span><strong id="lastDonationDate">—</strong></div>
+        <div class="metric"><span class="muted">Days since donation</span><strong id="daysSinceDonation">—</strong></div>
+        <div class="metric"><span class="muted">Expected review date</span><strong id="nextReviewDate">—</strong></div>
+        <div class="metric"><span class="muted">Live donor matching</span><strong id="matchingStatus">Checking…</strong></div>
+      </div>
+      <p id="recoveryLabel" class="muted">Recovery period progress</p>
+      <div class="progress-track" role="progressbar" aria-label="Recovery period elapsed; not a medical recovery assessment" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div id="recoveryProgress" class="progress-fill"></div>
+      </div>
+      <p class="muted">This calendar-based progress indicator is informational only. It does not measure recovery or prove medical eligibility.</p>
+      <div class="actions"><a class="button secondary" href="/donar-dashboard.html">Manage availability</a></div>
+    </section>
+
+    <section class="card" aria-labelledby="historyTitle">
+      <h2 id="historyTitle">Donor donation history</h2>
+      <p class="muted">Only authorized staff can verify or correct these records. Contact staff if a date needs correction.</p>
+      <div id="donationHistory" aria-live="polite">Loading donation history…</div>
+    </section>
+
+    <section class="card" aria-labelledby="reviewTitle">
+      <h2 id="reviewTitle">Eligibility review request</h2>
+      <p id="requestSummary" class="muted">Loading review request…</p>
+      <p id="requestInstructions" class="notice" hidden></p>
+      <p id="staffDecision" class="muted"></p>
+      <p id="reviewMessage" class="message" aria-live="polite"></p>
+      <button id="requestReview" type="button" hidden>Request eligibility review</button>
+    </section>
+
+    <section class="card" aria-labelledby="guidelinesTitle">
+      <h2 id="guidelinesTitle">Health and recovery guidelines</h2>
+      <ul>
+        <li>Rest after donation and follow the blood bank's aftercare instructions.</li>
+        <li>Drink sufficient fluids and eat balanced meals as advised by the blood bank.</li>
+        <li>Contact a healthcare professional if you experience concerning symptoms.</li>
+      </ul>
+      <p class="notice">This is general educational information, not medical advice. It does not replace advice from a qualified healthcare professional or blood-bank staff.</p>
+    </section>
+
+    <section class="card" aria-labelledby="checklistTitle">
+      <h2 id="checklistTitle">Donation readiness checklist</h2>
+      <ul class="checklist">
+        <li><label><input type="checkbox"><span>I will follow the instructions provided by the blood bank.</span></label></li>
+        <li><label><input type="checkbox"><span>I will tell qualified staff about relevant health changes and medications.</span></label></li>
+        <li><label><input type="checkbox"><span>I understand that this checklist does not determine eligibility.</span></label></li>
+      </ul>
+      <p class="muted">Final eligibility is determined by qualified blood-bank staff using applicable medical guidelines.</p>
+    </section>
+  </main>
+  <script src="/donor-eligibility.js" defer></script>
+</body>
+</html>

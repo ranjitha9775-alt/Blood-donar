@@ -179,6 +179,92 @@
           document.getElementById("hospitalMessage").textContent = error.message;
         }
       }
+      async function searchDailyBloodStock(event) {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const button = form.querySelector('button[type="submit"]');
+        const message = document.getElementById("dailyStockMessage");
+        const results = document.getElementById("dailyStockResults");
+        if (!form.reportValidity()) return;
+        button.disabled = true;
+        message.textContent = "Checking the latest verified LifeDrop stock report…";
+        results.replaceChildren();
+        const params = new URLSearchParams({
+          blood_group: form.elements.blood_group.value,
+          component: form.elements.component.value,
+          required_units: form.elements.required_units.value
+        });
+        for (const name of ["state", "district", "city"]) {
+          const value = form.elements[name].value.trim();
+          if (value) params.set(name, value);
+        }
+        try {
+          const data = await requestJson(`/api/blood-stock?${params}`);
+          message.textContent = `${data.inventory.length} verified bank record(s) · Checked ${new Date(data.checked_at).toLocaleString()}. Stock is reported, not reserved.`;
+          if (!data.inventory.length) {
+            results.append(Object.assign(document.createElement("div"), {
+              className: "empty-state",
+              textContent: "No matching verified daily stock reports were found. Check the separate e-RaktKosh search above or contact a local blood bank directly."
+            }));
+            return;
+          }
+          for (const stock of data.inventory) {
+            const card = document.createElement("article");
+            card.className = "stock-contact";
+            const heading = document.createElement("h3");
+            heading.textContent = stock.bank_name;
+            card.append(heading);
+            const location = document.createElement("p");
+            location.textContent = [stock.address, stock.city, stock.district, stock.state].filter(Boolean).join(", ");
+            card.append(location);
+            const group = document.createElement("p");
+            group.textContent = `${stock.blood_group} · ${stock.component.replaceAll("_", " ")} · ${stock.status}`;
+            card.append(group);
+            const quantity = document.createElement("p");
+            quantity.textContent = stock.available_units === null
+              ? "Available units are not confirmed because the report is stale or unverified."
+              : `${stock.available_units} available unit(s) · ${stock.meets_requested_units ? "Meets requested quantity" : "Below requested quantity"}`;
+            card.append(quantity);
+            const updated = document.createElement("p");
+            updated.textContent = `Last update: ${stock.last_updated ? new Date(stock.last_updated).toLocaleString() : "No daily update recorded"}`;
+            card.append(updated);
+            const contact = document.createElement("p");
+            const phone = typeof stock.phone === "string" ? stock.phone.trim() : "";
+            const phoneHref = phone.replace(/[^\d+]/g, "");
+            if (phone && phoneHref) {
+              const link = document.createElement("a");
+              link.href = `tel:${phoneHref}`;
+              link.textContent = "Enquire about availability";
+              contact.append(link);
+            } else {
+              contact.textContent = "Contact number not listed. Use the hospital or blood centre directory to confirm directly.";
+            }
+            card.append(contact);
+            results.append(card);
+          }
+        } catch (error) {
+          message.textContent = error.message;
+        } finally {
+          button.disabled = false;
+        }
+      }
+      async function loadDailyStockAlerts() {
+        const container = document.getElementById("dailyStockAlerts");
+        try {
+          const { alerts } = await requestJson("/api/blood-stock/alerts");
+          container.replaceChildren(...(alerts.length ? alerts.map(alert => {
+            const row = document.createElement("p");
+            row.className = "form-hint";
+            row.textContent = `${alert.bank_name} · ${alert.alert_type.replaceAll("_", " ")} · ${alert.message}`;
+            return row;
+          }) : []));
+        } catch (error) {
+          container.replaceChildren(Object.assign(document.createElement("p"), {
+            className: "form-hint",
+            textContent: `Stock alerts are temporarily unavailable: ${error.message}`
+          }));
+        }
+      }
       function renderRequests() {
         const list = document.getElementById("requestList");
         document.getElementById("requestCount").textContent = requestAuthorized ? String(bloodRequests.length) : "Login";
@@ -280,6 +366,8 @@
       renderCamps();
       updateCounts();
       initializeHospitalStockSearch();
+      document.getElementById("dailyStockSearchForm").addEventListener("submit", searchDailyBloodStock);
+      loadDailyStockAlerts();
       loadBloodRequests();
       document.getElementById("requestList").addEventListener("change", event => {
         const statusSelect = event.target.closest("[data-request-status]");
@@ -476,6 +564,7 @@
             body: JSON.stringify({
               patient: String(data.get("patient")).trim(),
               blood: data.get("blood"),
+              component: data.get("component") || "whole_blood",
               units: Number(data.get("units")),
               urgency: data.get("urgency"),
               hospital_name: String(data.get("hospitalName")).trim(),
@@ -490,11 +579,43 @@
             })
           });
           const requestId = `LD-${result.request_id}`;
+          const matchingBanks = Array.isArray(result.matching_blood_banks) ? result.matching_blood_banks : [];
+          const matchingContainer = document.getElementById("requestMatchingBanks");
+          matchingContainer.replaceChildren();
+          if (matchingBanks.length) {
+            const heading = document.createElement("h3");
+            heading.textContent = "Matching verified blood banks";
+            matchingContainer.append(heading);
+            const explanation = document.createElement("p");
+            explanation.className = "form-hint";
+            explanation.textContent = "These banks reported enough fresh stock when the request was submitted. The request does not reserve stock; confirm directly with the bank.";
+            matchingContainer.append(explanation);
+            for (const bank of matchingBanks) {
+              const card = document.createElement("article");
+              card.className = "stock-contact";
+              const title = document.createElement("h3");
+              title.textContent = bank.bank_name;
+              const location = document.createElement("p");
+              location.textContent = [bank.city, bank.district, bank.state].filter(Boolean).join(", ");
+              const units = document.createElement("p");
+              units.textContent = `${bank.available_units} ${String(data.get("component")).replaceAll("_", " ")} unit(s) · Updated ${bank.last_updated ? new Date(bank.last_updated).toLocaleString() : "time unavailable"}`;
+              card.append(title, location, units);
+              if (bank.phone) {
+                const contact = document.createElement("a");
+                contact.href = `tel:${String(bank.phone).replace(/[^\d+]/g, "")}`;
+                contact.textContent = "Enquire about availability";
+                card.append(contact);
+              }
+              matchingContainer.append(card);
+            }
+          }
           form.reset();
-          message.textContent = "";
-          document.getElementById("requestDialog").close();
+          message.textContent = matchingBanks.length
+            ? `Request ${requestId} saved. ${result.bank_staff_notifications_created || 0} authorized blood-bank staff notification(s) were saved in-app. No stock was reserved.`
+            : "";
+          if (!matchingBanks.length) document.getElementById("requestDialog").close();
           await loadBloodRequests();
-          showToast(result.matched_donor_count
+          if (!matchingBanks.length) showToast(result.matched_donor_count
             ? `Request ${requestId} saved. In-app notifications are ready for ${result.matched_donor_count} matching donor(s). No email or SMS was sent.`
             : `Request ${requestId} saved. No matching donors were available or opted in. No hospital was notified.`);
           document.getElementById("urgent").scrollIntoView({ behavior: "smooth" });

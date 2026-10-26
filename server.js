@@ -1,10 +1,28 @@
-require('dotenv').config();
+const path = require('node:path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const express = require('express');
 const mysql = require('mysql2/promise');
-const path = require('node:path');
 const crypto = require('node:crypto');
 const bcrypt = require('bcryptjs');
+const {
+  addCalendarMonths,
+  isValidDateOnly: isValidDateOnlyValue,
+  isValidDonationDate
+} = require('./donation-date');
+const {
+  areBloodGroupsCompatible,
+  getCompatibleDonorBloodGroups
+} = require('./blood-group-utils');
+const { canAccessBloodBankPortal } = require('./authorization-utils');
+const { isAvailabilitySearchEligible, normalizeAvailabilityState } = require('./availability-utils');
+const { calculateStock, getStockStatus, isStockFreshForUtcDate } = require('./stock-utils');
+const {
+  canRequestEligibilityReview,
+  getEligibilityPortalStatus,
+  getRecoveryProgress,
+  isMatchingEligibilityConfirmed
+} = require('./eligibility-portal-utils');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -12,6 +30,11 @@ const DATABASE_NAME = process.env.DB_NAME || 'lifedrop';
 const PORTAL_SCHEMA = DATABASE_NAME === 'blood_donar_portal';
 const AVAILABILITY_HOURS = 24;
 const AVAILABILITY_DURATIONS_HOURS = [4, 12, 24];
+const DONATION_ELIGIBILITY_MONTHS = Number(process.env.DONATION_ELIGIBILITY_MONTHS || 3);
+if (!Number.isInteger(DONATION_ELIGIBILITY_MONTHS) ||
+    DONATION_ELIGIBILITY_MONTHS < 1 || DONATION_ELIGIBILITY_MONTHS > 24) {
+  throw new Error('DONATION_ELIGIBILITY_MONTHS must be an integer between 1 and 24.');
+}
 const DONOR_RESPONSE_WINDOW_MINUTES = Number(process.env.DONOR_RESPONSE_WINDOW_MINUTES || 120);
 if (!Number.isInteger(DONOR_RESPONSE_WINDOW_MINUTES) ||
     DONOR_RESPONSE_WINDOW_MINUTES < 1 || DONOR_RESPONSE_WINDOW_MINUTES > 1440) {
@@ -26,9 +49,61 @@ const REQUEST_STATUSES = new Set(['Pending Verification', 'Under Review', 'Fulfi
 const PHONE_PATTERN = /^[+0-9 ()-]{7,20}$/;
 const SESSION_COOKIE = 'lifedrop_session';
 const BLOOD_STOCK_API = 'https://eraktkosh.mohfw.gov.in/eraktkoshPortal/eraktkosh';
+const DONOR_ELIGIBILITY_SQL = `(
+  COALESCE(d.next_eligible_date,
+    DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)) IS NULL
+  OR COALESCE(d.next_eligible_date,
+    DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)) <= UTC_DATE()
+)
+AND (d.last_donation_date IS NULL OR d.last_confirmed_at >= COALESCE(
+  d.next_eligible_date,
+  DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)
+))
+AND EXISTS (
+  SELECT 1
+  FROM donor_health_screenings hs
+  WHERE hs.donor_user_id = d.user_id
+    AND hs.screening_id = (
+      SELECT latest_hs.screening_id
+      FROM donor_health_screenings latest_hs
+      WHERE latest_hs.donor_user_id = d.user_id
+      ORDER BY latest_hs.submitted_at DESC, latest_hs.screening_id DESC
+      LIMIT 1
+    )
+    AND hs.review_status = 'Cleared'
+    AND hs.health_data_consent_at IS NOT NULL
+    AND hs.submitted_at >= COALESCE(
+      (SELECT MAX(dh.verified_at) FROM donor_donation_history dh
+       WHERE dh.donor_user_id = d.user_id AND dh.verification_status = 'verified'),
+      d.last_donation_date,
+      '1000-01-01 00:00:00'
+    )
+    AND EXISTS (
+      SELECT 1
+      FROM donor_eligibility_reviews er
+      WHERE er.donor_user_id = d.user_id
+        AND er.decision = 'eligible'
+        AND er.reviewed_at >= hs.submitted_at
+        AND d.last_confirmed_at >= er.reviewed_at
+        AND er.reviewed_at >= COALESCE(
+          (SELECT MAX(dh.verified_at) FROM donor_donation_history dh
+           WHERE dh.donor_user_id = d.user_id AND dh.verification_status = 'verified'),
+          d.last_donation_date,
+          '1000-01-01 00:00:00'
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM donor_eligibility_reviews newer_review
+          WHERE newer_review.donor_user_id = d.user_id
+            AND (newer_review.reviewed_at > er.reviewed_at
+              OR (newer_review.reviewed_at = er.reviewed_at
+                AND newer_review.review_id > er.review_id))
+        )
+    )
+)`;
 const DONOR_AVAILABILITY_STATUS_SQL = `CASE
   WHEN d.available = 1
        AND d.last_confirmed_at IS NOT NULL
+       AND ${DONOR_ELIGIBILITY_SQL}
        AND COALESCE(d.availability_mode, 'general') = 'selected_dates'
        AND EXISTS (
          SELECT 1 FROM donor_availability_dates ad
@@ -38,6 +113,7 @@ const DONOR_AVAILABILITY_STATUS_SQL = `CASE
        ) THEN 'available'
   WHEN d.available = 1
        AND d.last_confirmed_at IS NOT NULL
+      AND ${DONOR_ELIGIBILITY_SQL}
        AND COALESCE(d.availability_mode, 'general') = 'general'
        AND d.availability_expires_at > UTC_TIMESTAMP() THEN 'available'
   WHEN d.available = 1
@@ -58,6 +134,10 @@ const DONOR_AVAILABILITY_STATUS_SQL = `CASE
        ) THEN 'expired'
   WHEN d.available = 0
        AND d.last_confirmed_at IS NOT NULL
+       AND LOWER(COALESCE(d.availability_status, '')) = 'temporarily_unavailable'
+       THEN 'temporarily_unavailable'
+  WHEN d.available = 0
+       AND d.last_confirmed_at IS NOT NULL
        AND REPLACE(REPLACE(LOWER(COALESCE(d.availability_status, '')), ' ', '_'), '-', '_')
            IN ('not_available', 'unavailable') THEN 'unavailable'
   ELSE 'unconfirmed'
@@ -72,10 +152,15 @@ if (!sessionSecret && process.env.NODE_ENV === 'production') {
   throw new Error('SESSION_SECRET must be configured in production.');
 }
 const signingSecret = sessionSecret || crypto.randomBytes(32).toString('hex');
+const healthDataEncryptionKey = typeof process.env.HEALTH_DATA_ENCRYPTION_KEY === 'string' &&
+  /^[a-f\d]{64}$/i.test(process.env.HEALTH_DATA_ENCRYPTION_KEY)
+  ? Buffer.from(process.env.HEALTH_DATA_ENCRYPTION_KEY, 'hex')
+  : null;
 let databaseReady = false;
 let adminReady = false;
 let bloodStockMasterCache = null;
 let bloodStockMasterFetchedAt = 0;
+let bloodStockAlertTimer = null;
 
 const db = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
@@ -129,9 +214,50 @@ function normalizeBloodGroup(value) {
 }
 
 function isValidDateOnly(value) {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const date = new Date(`${value}T00:00:00.000Z`);
-  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+  return isValidDateOnlyValue(value);
+}
+
+function formatDatabaseDateOnly(value) {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) {
+    return value.slice(0, 10);
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : '';
+}
+
+function encryptHealthResponses(responses) {
+  if (!healthDataEncryptionKey) return null;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', healthDataEncryptionKey, iv);
+  const ciphertext = Buffer.concat([
+    cipher.update(JSON.stringify(responses), 'utf8'),
+    cipher.final()
+  ]);
+  return JSON.stringify({
+    encryption: 'aes-256-gcm-v1',
+    iv: iv.toString('base64'),
+    tag: cipher.getAuthTag().toString('base64'),
+    ciphertext: ciphertext.toString('base64')
+  });
+}
+
+function decryptHealthResponses(value) {
+  const stored = typeof value === 'string' ? JSON.parse(value) : value;
+  if (stored?.encryption !== 'aes-256-gcm-v1') return stored || {};
+  if (!healthDataEncryptionKey) {
+    throw new Error('HEALTH_DATA_ENCRYPTION_KEY is required to decrypt health screening records.');
+  }
+  const decipher = crypto.createDecipheriv(
+    'aes-256-gcm',
+    healthDataEncryptionKey,
+    Buffer.from(stored.iv, 'base64')
+  );
+  decipher.setAuthTag(Buffer.from(stored.tag, 'base64'));
+  const plaintext = Buffer.concat([
+    decipher.update(Buffer.from(stored.ciphertext, 'base64')),
+    decipher.final()
+  ]).toString('utf8');
+  return JSON.parse(plaintext);
 }
 
 function formatSqlUtcDateTime(value) {
@@ -317,6 +443,33 @@ async function requireSession(req, res, next) {
   }
 }
 
+async function requireBloodBankStaff(req, res, next) {
+  if (req.user?.role !== 'blood_bank') {
+    return res.status(403).json({ message: 'Authorized blood-bank staff access is required.' });
+  }
+  try {
+    const [staffRows] = await db.execute(
+      `SELECT s.bank_id, b.bank_name, b.city, b.district, b.state, b.is_active
+       FROM blood_bank_staff s
+       JOIN blood_banks b ON b.blood_bank_id = s.bank_id
+       WHERE s.user_id = ? AND b.is_active = 1
+       LIMIT 1`,
+      [req.user.user_id]
+    );
+    if (!staffRows.length) {
+      return res.status(403).json({ message: 'A verified blood-bank administrator must map your staff account to an active bank.' });
+    }
+    if (!canAccessBloodBankPortal(req.user, staffRows[0])) {
+      return res.status(403).json({ message: 'Authorized blood-bank staff access is required.' });
+    }
+    req.bloodBank = staffRows[0];
+    next();
+  } catch (error) {
+    console.error('Blood-bank staff authorization failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not verify blood-bank staff access.' });
+  }
+}
+
 function requireDashboardSession(req, res, next) {
   if (!getSessionUserId(req)) {
     return res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
@@ -341,6 +494,11 @@ function serveAccountDashboard(role, filename) {
 
 app.get('/donar-dashboard.html', requireDatabase, requireDashboardSession, serveAccountDashboard('donor', 'donar-dashboard.html'));
 app.get('/donor-dashboard.html', requireDatabase, requireDashboardSession, serveAccountDashboard('donor', 'donar-dashboard.html'));
+app.get('/donor-eligibility.html', requireDatabase, requireDashboardSession, (req, res) => {
+  if (req.user.role !== 'donor') return res.redirect('/donar-dashboard.html');
+  res.set('Cache-Control', 'no-store');
+  res.sendFile(path.join(__dirname, 'donor-eligibility.html'));
+});
 app.get('/patient-dashboard.html', requireDatabase, requireDashboardSession, serveAccountDashboard('patient', 'patient-dashboard.html'));
 app.get('/blood-bank-review.html', requireDatabase, requireDashboardSession, (req, res) => {
   if (req.user.role !== 'blood_bank') return res.sendStatus(403);
@@ -353,12 +511,474 @@ app.get('/blood-bank-review.js', (req, res) => {
 app.get('/dashboard.js', (req, res) => {
   res.sendFile(path.join(__dirname, 'dashboard.js'));
 });
+app.get('/donor-eligibility.js', (req, res) => {
+  res.sendFile(path.join(__dirname, 'donor-eligibility.js'));
+});
 
 async function ensureColumn(table, name, definition) {
   const [columns] = await db.query(`SHOW COLUMNS FROM \`${table}\``);
   if (!columns.some(column => column.Field === name)) {
     await db.query(`ALTER TABLE \`${table}\` ADD COLUMN \`${name}\` ${definition}`);
   }
+}
+
+async function ensureTemporaryUnavailableStatus() {
+  const [columns] = await db.query('SHOW COLUMNS FROM donors');
+  const availabilityStatus = columns.find(column => column.Field === 'availability_status');
+  if (!availabilityStatus) {
+    throw new Error('The donors.availability_status column is unavailable.');
+  }
+  if (!availabilityStatus.Type.includes('temporarily_unavailable')) {
+    await db.query(
+      `ALTER TABLE donors MODIFY COLUMN availability_status
+       ENUM('available', 'not_available', 'temporarily_unavailable')
+       NOT NULL DEFAULT 'not_available'`
+    );
+  }
+}
+
+async function setBloodStockAlert({ bankId, scopeKey, bloodGroup = null, component = null, type, message }) {
+  await db.execute(
+    `INSERT INTO blood_stock_alerts
+       (blood_bank_id, scope_key, blood_group, component, alert_type, is_active,
+        message, first_triggered_at, last_triggered_at)
+     VALUES (?, ?, ?, ?, ?, 1, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())
+     ON DUPLICATE KEY UPDATE
+       first_triggered_at = IF(is_active = 0, UTC_TIMESTAMP(), first_triggered_at),
+       last_triggered_at = IF(is_active = 0, UTC_TIMESTAMP(), last_triggered_at),
+       resolved_at = NULL,
+       message = VALUES(message),
+       is_active = 1`,
+    [bankId, scopeKey, bloodGroup, component, type, message]
+  );
+}
+
+async function resolveBloodStockAlerts(bankId, scopeKey, exceptType = null) {
+  await db.execute(
+    `UPDATE blood_stock_alerts
+     SET is_active = 0, resolved_at = UTC_TIMESTAMP()
+     WHERE blood_bank_id = ? AND scope_key = ? AND is_active = 1
+       AND (? IS NULL OR alert_type <> ?)`,
+    [bankId, scopeKey, exceptType, exceptType]
+  );
+}
+
+async function syncBloodStockAlerts() {
+  const [banks] = await db.query(
+    `SELECT b.blood_bank_id, b.bank_name,
+            EXISTS(
+              SELECT 1 FROM blood_stock s
+              WHERE s.blood_bank_id = b.blood_bank_id
+                AND s.last_updated >= UTC_DATE()
+                AND s.last_updated < DATE_ADD(UTC_DATE(), INTERVAL 1 DAY)
+            ) AS update_submitted_today
+     FROM blood_banks b
+     WHERE b.is_active = 1`
+  );
+  const [stocks] = await db.query(
+    `SELECT s.stock_id, s.blood_bank_id, b.bank_name, s.blood_group, s.component,
+            s.available_units, s.low_stock_threshold, s.verification_status,
+            s.last_updated, COALESCE(t.low_stock_threshold, s.low_stock_threshold, 0) AS threshold
+     FROM blood_stock s
+     JOIN blood_banks b ON b.blood_bank_id = s.blood_bank_id
+     LEFT JOIN blood_stock_thresholds t
+       ON t.blood_bank_id = s.blood_bank_id
+      AND t.blood_group = s.blood_group AND t.component = s.component
+     WHERE b.is_active = 1`
+  );
+  for (const bank of banks) {
+    if (Boolean(bank.update_submitted_today)) {
+      await resolveBloodStockAlerts(bank.blood_bank_id, 'BANK');
+      continue;
+    }
+    await setBloodStockAlert({
+      bankId: bank.blood_bank_id,
+      scopeKey: 'BANK',
+      type: 'update_required',
+      message: `${bank.bank_name} has no confirmed daily stock update for the current UTC date.`
+    });
+  }
+  for (const stock of stocks) {
+    const stale = !isStockFreshForUtcDate(stock.last_updated);
+    let alertType = null;
+    let message = '';
+    if (stock.verification_status !== 'verified') {
+      alertType = 'unverified';
+      message = `${stock.bank_name}: ${stock.blood_group} ${stock.component} requires staff verification.`;
+    } else if (stale) {
+      alertType = 'update_required';
+      message = `${stock.bank_name}: ${stock.blood_group} ${stock.component} stock update is overdue.`;
+    } else if (Number(stock.available_units) === 0) {
+      alertType = 'out_of_stock';
+      message = `${stock.bank_name}: ${stock.blood_group} ${stock.component} is out of stock.`;
+    } else if (Number(stock.available_units) < Number(stock.threshold)) {
+      alertType = 'low_stock';
+      message = `${stock.bank_name}: ${stock.blood_group} ${stock.component} is below its configured threshold.`;
+    }
+    const scopeKey = `${stock.blood_group}:${stock.component}`;
+    await resolveBloodStockAlerts(stock.blood_bank_id, scopeKey, alertType);
+    if (alertType) {
+      await setBloodStockAlert({
+        bankId: stock.blood_bank_id,
+        scopeKey,
+        bloodGroup: stock.blood_group,
+        component: stock.component,
+        type: alertType,
+        message
+      });
+    }
+  }
+}
+
+async function initializeDonationCoordinationSchema(userIdType) {
+  await ensureColumn('donors', 'next_eligible_date', 'DATE NULL AFTER last_donation_date');
+  await ensureColumn('donor_health_screenings', 'health_data_consent_at', 'DATETIME NULL AFTER review_notes');
+  await ensureColumn('donor_health_screenings', 'form_version', 'VARCHAR(20) NULL AFTER health_data_consent_at');
+  await ensureColumn('blood_requests', 'component', "ENUM('whole_blood', 'red_cells', 'platelets', 'plasma') NOT NULL DEFAULT 'whole_blood' AFTER blood_group");
+  await ensureColumn('blood_requests', 'coordination_status', "ENUM('Pending', 'Under Review', 'Accepted', 'Rejected', 'In Progress', 'Fulfilled', 'Cancelled') NOT NULL DEFAULT 'Pending' AFTER status");
+  await db.query(
+    `ALTER TABLE blood_requests MODIFY COLUMN coordination_status
+     ENUM('Pending', 'Under Review', 'Accepted', 'Rejected', 'In Progress', 'Fulfilled', 'Cancelled')
+     NOT NULL DEFAULT 'Pending'`
+  );
+  await ensureColumn('blood_requests', 'coordinator_user_id', `${userIdType} NULL AFTER coordination_status`);
+  await ensureColumn('blood_requests', 'coordinator_bank_id', 'INT NULL AFTER coordinator_user_id');
+  await ensureColumn('blood_requests', 'coordination_updated_at', 'DATETIME NULL AFTER coordinator_bank_id');
+  await db.query(
+    `CREATE TABLE IF NOT EXISTS donor_donation_history (
+      donation_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      donor_user_id ${userIdType} NOT NULL,
+      donation_date DATE NOT NULL,
+      eligibility_interval_months SMALLINT UNSIGNED NOT NULL DEFAULT 3,
+      next_eligible_date DATE NOT NULL,
+      verification_status ENUM('verified', 'rejected') NOT NULL DEFAULT 'verified',
+      recorded_by_admin_username VARCHAR(80) NOT NULL,
+      verified_by_admin_username VARCHAR(80) NOT NULL,
+      verified_at DATETIME NOT NULL,
+      notes VARCHAR(500) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (donation_id),
+      KEY idx_donation_history_donor (donor_user_id, donation_date),
+      KEY idx_donation_history_eligibility (donor_user_id, next_eligible_date, verification_status),
+      CONSTRAINT fk_donation_history_donor FOREIGN KEY (donor_user_id)
+        REFERENCES users (user_id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await db.query(
+    `CREATE TABLE IF NOT EXISTS donor_eligibility_reviews (
+      review_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      donor_user_id ${userIdType} NOT NULL,
+      decision ENUM('eligible', 'deferred') NOT NULL,
+      reviewed_by_user_id ${userIdType} NOT NULL,
+      reviewed_at DATETIME NOT NULL,
+      notes VARCHAR(500) NULL,
+      PRIMARY KEY (review_id),
+      KEY idx_eligibility_review_donor (donor_user_id, reviewed_at),
+      CONSTRAINT fk_eligibility_review_donor FOREIGN KEY (donor_user_id)
+        REFERENCES users (user_id) ON DELETE RESTRICT,
+      CONSTRAINT fk_eligibility_review_staff FOREIGN KEY (reviewed_by_user_id)
+        REFERENCES users (user_id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await db.query(
+    `CREATE TABLE IF NOT EXISTS donor_eligibility_review_requests (
+      request_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      donor_user_id ${userIdType} NOT NULL,
+      request_status ENUM('pending', 'approved', 'rejected') NOT NULL DEFAULT 'pending',
+      requested_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      reviewed_by_admin_id TINYINT UNSIGNED NULL,
+      reviewed_at DATETIME NULL,
+      instructions VARCHAR(500) NULL,
+      PRIMARY KEY (request_id),
+      KEY idx_eligibility_requests_status (request_status, requested_at),
+      KEY idx_eligibility_requests_donor (donor_user_id, requested_at),
+      CONSTRAINT fk_eligibility_request_donor FOREIGN KEY (donor_user_id)
+        REFERENCES users (user_id) ON DELETE RESTRICT,
+      CONSTRAINT fk_eligibility_request_admin FOREIGN KEY (reviewed_by_admin_id)
+        REFERENCES admin_users (admin_id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await db.query(
+    `CREATE TABLE IF NOT EXISTS donor_donation_history_corrections (
+      correction_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      donation_id BIGINT UNSIGNED NOT NULL,
+      donor_user_id ${userIdType} NOT NULL,
+      previous_donation_date DATE NOT NULL,
+      corrected_donation_date DATE NOT NULL,
+      corrected_by_admin_id TINYINT UNSIGNED NOT NULL,
+      correction_note VARCHAR(500) NOT NULL,
+      corrected_at DATETIME NOT NULL,
+      PRIMARY KEY (correction_id),
+      KEY idx_donation_corrections_record (donation_id, corrected_at),
+      CONSTRAINT fk_donation_correction_record FOREIGN KEY (donation_id)
+        REFERENCES donor_donation_history (donation_id) ON DELETE RESTRICT,
+      CONSTRAINT fk_donation_correction_donor FOREIGN KEY (donor_user_id)
+        REFERENCES users (user_id) ON DELETE RESTRICT,
+      CONSTRAINT fk_donation_correction_admin FOREIGN KEY (corrected_by_admin_id)
+        REFERENCES admin_users (admin_id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await db.query(
+    `CREATE TABLE IF NOT EXISTS blood_request_events (
+      event_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      request_id ${PORTAL_SCHEMA ? 'INT' : 'BIGINT UNSIGNED'} NOT NULL,
+      actor_user_id ${userIdType} NULL,
+      event_type VARCHAR(40) NOT NULL,
+      previous_status VARCHAR(32) NULL,
+      new_status VARCHAR(32) NULL,
+      details JSON NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (event_id),
+      KEY idx_request_events_request (request_id, created_at),
+      CONSTRAINT fk_request_events_request FOREIGN KEY (request_id)
+        REFERENCES blood_requests (request_id) ON DELETE RESTRICT,
+      CONSTRAINT fk_request_events_actor FOREIGN KEY (actor_user_id)
+        REFERENCES users (user_id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await db.query(
+    `CREATE TABLE IF NOT EXISTS blood_banks (
+      blood_bank_id INT NOT NULL AUTO_INCREMENT,
+      bank_name VARCHAR(150) NOT NULL,
+      phone VARCHAR(20) NULL,
+      email VARCHAR(150) NULL,
+      address_text VARCHAR(255) NOT NULL,
+      city VARCHAR(80) NULL,
+      district VARCHAR(80) NULL,
+      state VARCHAR(80) NULL,
+      operating_hours VARCHAR(120) NULL,
+      latitude DECIMAL(10,7) NULL,
+      longitude DECIMAL(10,7) NULL,
+      verified TINYINT(1) NOT NULL DEFAULT 0,
+      verification_status ENUM('pending', 'verified', 'rejected') NOT NULL DEFAULT 'pending',
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (blood_bank_id),
+      KEY idx_blood_banks_public_search (verification_status, is_active, city)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await db.query(
+    `CREATE TABLE IF NOT EXISTS blood_bank_staff (
+      user_id ${userIdType} NOT NULL,
+      bank_id INT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id),
+      KEY idx_blood_bank_staff_bank (bank_id),
+      CONSTRAINT fk_blood_bank_staff_bank FOREIGN KEY (bank_id)
+        REFERENCES blood_banks (blood_bank_id) ON DELETE CASCADE,
+      CONSTRAINT fk_blood_bank_staff_user FOREIGN KEY (user_id)
+        REFERENCES users (user_id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await db.query(
+    `CREATE TABLE IF NOT EXISTS blood_inventory (
+      inventory_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      bank_id INT NOT NULL,
+      blood_group VARCHAR(3) NOT NULL,
+      component ENUM('whole_blood', 'red_cells', 'platelets', 'plasma') NOT NULL,
+      available_units INT UNSIGNED NOT NULL DEFAULT 0,
+      low_stock_threshold INT UNSIGNED NOT NULL DEFAULT 0,
+      expires_at DATETIME NOT NULL,
+      verification_status ENUM('pending', 'verified', 'rejected') NOT NULL DEFAULT 'pending',
+      last_updated DATETIME NOT NULL,
+      updated_by ${userIdType} NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (inventory_id),
+      UNIQUE KEY uq_blood_inventory_lot (bank_id, blood_group, component, expires_at),
+      KEY idx_blood_inventory_search (blood_group, component, verification_status, last_updated, expires_at),
+      KEY idx_blood_inventory_bank (bank_id, verification_status),
+      CONSTRAINT fk_blood_inventory_bank FOREIGN KEY (bank_id)
+        REFERENCES blood_banks (blood_bank_id) ON DELETE CASCADE,
+      CONSTRAINT fk_blood_inventory_user FOREIGN KEY (updated_by)
+        REFERENCES users (user_id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await db.query(
+    `CREATE TABLE IF NOT EXISTS blood_bank_audit_logs (
+      audit_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      actor_user_id ${userIdType} NOT NULL,
+      bank_id INT NOT NULL,
+      inventory_id BIGINT UNSIGNED NULL,
+      action VARCHAR(40) NOT NULL,
+      details JSON NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (audit_id),
+      KEY idx_blood_bank_audit_bank_date (bank_id, created_at),
+      KEY idx_blood_bank_audit_actor_date (actor_user_id, created_at),
+      CONSTRAINT fk_blood_bank_audit_actor FOREIGN KEY (actor_user_id)
+        REFERENCES users (user_id) ON DELETE RESTRICT,
+      CONSTRAINT fk_blood_bank_audit_bank FOREIGN KEY (bank_id)
+        REFERENCES blood_banks (blood_bank_id) ON DELETE RESTRICT,
+      CONSTRAINT fk_blood_bank_audit_inventory FOREIGN KEY (inventory_id)
+        REFERENCES blood_inventory (inventory_id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await ensureColumn('blood_inventory', 'low_stock_threshold', 'INT UNSIGNED NOT NULL DEFAULT 0 AFTER available_units');
+  await db.query(
+    `CREATE TABLE IF NOT EXISTS blood_stock (
+      stock_id INT NOT NULL AUTO_INCREMENT,
+      blood_bank_id INT NOT NULL,
+      blood_group ENUM('A+','A-','B+','B-','AB+','AB-','O+','O-') NOT NULL,
+      component ENUM('whole_blood', 'red_cells', 'platelets', 'plasma') NOT NULL DEFAULT 'whole_blood',
+      units_available INT UNSIGNED NOT NULL DEFAULT 0,
+      physical_units INT UNSIGNED NOT NULL DEFAULT 0,
+      reserved_units INT UNSIGNED NOT NULL DEFAULT 0,
+      issued_units INT UNSIGNED NOT NULL DEFAULT 0,
+      discarded_units INT UNSIGNED NOT NULL DEFAULT 0,
+      total_eligible_units INT UNSIGNED NOT NULL DEFAULT 0,
+      available_units INT UNSIGNED NOT NULL DEFAULT 0,
+      low_stock_threshold INT UNSIGNED NOT NULL DEFAULT 0,
+      verification_status ENUM('pending', 'verified', 'rejected') NOT NULL DEFAULT 'pending',
+      updated_by ${userIdType} NULL,
+      reviewed_by_admin_id TINYINT UNSIGNED NULL,
+      reviewed_at DATETIME NULL,
+      last_updated TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (stock_id),
+      UNIQUE KEY uq_blood_stock_bank_group_component (blood_bank_id, blood_group, component),
+      KEY idx_blood_stock_public_search (blood_group, component, verification_status, last_updated),
+      CONSTRAINT fk_blood_stock_bank FOREIGN KEY (blood_bank_id)
+        REFERENCES blood_banks (blood_bank_id) ON DELETE CASCADE,
+      CONSTRAINT fk_blood_stock_staff FOREIGN KEY (updated_by)
+        REFERENCES users (user_id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  for (const [name, definition] of [
+    ['component', "ENUM('whole_blood', 'red_cells', 'platelets', 'plasma') NOT NULL DEFAULT 'whole_blood' AFTER blood_group"],
+    ['physical_units', 'INT UNSIGNED NOT NULL DEFAULT 0 AFTER units_available'],
+    ['reserved_units', 'INT UNSIGNED NOT NULL DEFAULT 0 AFTER physical_units'],
+    ['issued_units', 'INT UNSIGNED NOT NULL DEFAULT 0 AFTER reserved_units'],
+    ['discarded_units', 'INT UNSIGNED NOT NULL DEFAULT 0 AFTER issued_units'],
+    ['total_eligible_units', 'INT UNSIGNED NOT NULL DEFAULT 0 AFTER discarded_units'],
+    ['available_units', 'INT UNSIGNED NOT NULL DEFAULT 0 AFTER total_eligible_units'],
+    ['low_stock_threshold', 'INT UNSIGNED NOT NULL DEFAULT 0 AFTER available_units'],
+    ['verification_status', "ENUM('pending', 'verified', 'rejected') NOT NULL DEFAULT 'pending' AFTER low_stock_threshold"],
+    ['updated_by', `${userIdType} NULL AFTER verification_status`],
+    ['reviewed_by_admin_id', 'TINYINT UNSIGNED NULL AFTER updated_by'],
+    ['reviewed_at', 'DATETIME NULL AFTER reviewed_by_admin_id']
+  ]) {
+    await ensureColumn('blood_stock', name, definition);
+  }
+  const [stockIndexes] = await db.query('SHOW INDEX FROM blood_stock');
+  if (!stockIndexes.some(index => index.Key_name === 'uq_blood_stock_bank_group_component')) {
+    await db.query(
+      'CREATE UNIQUE INDEX uq_blood_stock_bank_group_component ON blood_stock (blood_bank_id, blood_group, component)'
+    );
+  }
+  const [updatedStockIndexes] = await db.query('SHOW INDEX FROM blood_stock');
+  if (updatedStockIndexes.some(index => index.Key_name === 'uq_bank_blood_group')) {
+    await db.query('ALTER TABLE blood_stock DROP INDEX uq_bank_blood_group');
+  }
+  const [finalStockIndexes] = await db.query('SHOW INDEX FROM blood_stock');
+  if (!finalStockIndexes.some(index => index.Key_name === 'idx_blood_stock_public_search')) {
+    await db.query(
+      'CREATE INDEX idx_blood_stock_public_search ON blood_stock (blood_group, component, verification_status, last_updated)'
+    );
+  }
+  await db.query(
+    `CREATE TABLE IF NOT EXISTS stock_history (
+      history_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      stock_id INT NOT NULL,
+      blood_bank_id INT NOT NULL,
+      blood_group VARCHAR(3) NOT NULL,
+      component ENUM('whole_blood', 'red_cells', 'platelets', 'plasma') NOT NULL,
+      previous_physical_units INT UNSIGNED NOT NULL,
+      physical_units INT UNSIGNED NOT NULL,
+      previous_reserved_units INT UNSIGNED NOT NULL,
+      reserved_units INT UNSIGNED NOT NULL,
+      previous_issued_units INT UNSIGNED NOT NULL,
+      issued_units INT UNSIGNED NOT NULL,
+      previous_discarded_units INT UNSIGNED NOT NULL,
+      discarded_units INT UNSIGNED NOT NULL,
+      previous_available_units INT UNSIGNED NOT NULL,
+      available_units INT UNSIGNED NOT NULL,
+      transaction_type ENUM('daily_update', 'correction') NOT NULL DEFAULT 'daily_update',
+      quantity_changed INT NOT NULL,
+      idempotency_key CHAR(36) NOT NULL,
+      remarks VARCHAR(500) NULL,
+      staff_user_id ${userIdType} NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (history_id),
+      UNIQUE KEY uq_stock_history_idempotency (idempotency_key),
+      KEY idx_stock_history_bank_date (blood_bank_id, created_at),
+      KEY idx_stock_history_stock_date (stock_id, created_at),
+      CONSTRAINT fk_stock_history_stock FOREIGN KEY (stock_id)
+        REFERENCES blood_stock (stock_id) ON DELETE RESTRICT,
+      CONSTRAINT fk_stock_history_bank FOREIGN KEY (blood_bank_id)
+        REFERENCES blood_banks (blood_bank_id) ON DELETE RESTRICT,
+      CONSTRAINT fk_stock_history_staff FOREIGN KEY (staff_user_id)
+        REFERENCES users (user_id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await db.query(
+    `CREATE TABLE IF NOT EXISTS blood_stock_thresholds (
+      blood_bank_id INT NOT NULL,
+      blood_group ENUM('A+','A-','B+','B-','AB+','AB-','O+','O-') NOT NULL,
+      component ENUM('whole_blood', 'red_cells', 'platelets', 'plasma') NOT NULL,
+      low_stock_threshold INT UNSIGNED NOT NULL DEFAULT 0,
+      updated_by_admin_id TINYINT UNSIGNED NOT NULL,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (blood_bank_id, blood_group, component),
+      CONSTRAINT fk_stock_threshold_bank FOREIGN KEY (blood_bank_id)
+        REFERENCES blood_banks (blood_bank_id) ON DELETE CASCADE,
+      CONSTRAINT fk_stock_threshold_admin FOREIGN KEY (updated_by_admin_id)
+        REFERENCES admin_users (admin_id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await db.query(
+    `CREATE TABLE IF NOT EXISTS blood_stock_threshold_history (
+      threshold_history_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      blood_bank_id INT NOT NULL,
+      blood_group VARCHAR(3) NOT NULL,
+      component ENUM('whole_blood', 'red_cells', 'platelets', 'plasma') NOT NULL,
+      previous_threshold INT UNSIGNED NULL,
+      new_threshold INT UNSIGNED NOT NULL,
+      updated_by_admin_id TINYINT UNSIGNED NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (threshold_history_id),
+      KEY idx_stock_threshold_history (blood_bank_id, blood_group, component, created_at),
+      CONSTRAINT fk_stock_threshold_history_bank FOREIGN KEY (blood_bank_id)
+        REFERENCES blood_banks (blood_bank_id) ON DELETE CASCADE,
+      CONSTRAINT fk_stock_threshold_history_admin FOREIGN KEY (updated_by_admin_id)
+        REFERENCES admin_users (admin_id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await db.query(
+    `CREATE TABLE IF NOT EXISTS blood_stock_alerts (
+      alert_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      blood_bank_id INT NOT NULL,
+      scope_key VARCHAR(32) NOT NULL,
+      blood_group VARCHAR(3) NULL,
+      component VARCHAR(20) NULL,
+      alert_type ENUM('low_stock', 'out_of_stock', 'update_required', 'unverified') NOT NULL,
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      message VARCHAR(255) NOT NULL,
+      first_triggered_at DATETIME NOT NULL,
+      last_triggered_at DATETIME NOT NULL,
+      resolved_at DATETIME NULL,
+      PRIMARY KEY (alert_id),
+      UNIQUE KEY uq_stock_alert_scope (blood_bank_id, scope_key, alert_type),
+      KEY idx_stock_alert_active (is_active, blood_bank_id, alert_type),
+      CONSTRAINT fk_stock_alert_bank FOREIGN KEY (blood_bank_id)
+        REFERENCES blood_banks (blood_bank_id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await db.query(
+    `CREATE TABLE IF NOT EXISTS blood_bank_notifications (
+      notification_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      staff_user_id ${userIdType} NOT NULL,
+      request_id ${PORTAL_SCHEMA ? 'INT' : 'BIGINT UNSIGNED'} NOT NULL,
+      notification_type ENUM('emergency_request') NOT NULL DEFAULT 'emergency_request',
+      read_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (notification_id),
+      UNIQUE KEY uq_bank_request_notification (staff_user_id, request_id, notification_type),
+      KEY idx_bank_notifications_unread (staff_user_id, read_at, created_at),
+      CONSTRAINT fk_bank_notification_staff FOREIGN KEY (staff_user_id)
+        REFERENCES users (user_id) ON DELETE CASCADE,
+      CONSTRAINT fk_bank_notification_request FOREIGN KEY (request_id)
+        REFERENCES blood_requests (request_id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
 }
 
 async function initializePortalSchemaCompatibility() {
@@ -406,6 +1026,7 @@ async function initializePortalSchemaCompatibility() {
   ]) {
     await ensureColumn('donors', name, definition);
   }
+  await ensureTemporaryUnavailableStatus();
 
   await db.execute(
     `UPDATE donors d
@@ -738,6 +1359,7 @@ async function initializeDatabase() {
   for (const [columnName, statement] of migrations) {
     if (!columnNames.has(columnName)) await db.query(statement);
   }
+  await ensureTemporaryUnavailableStatus();
   await db.query(
     `CREATE TABLE IF NOT EXISTS donor_availability_dates (
       donor_user_id ${appUserIdType} NOT NULL,
@@ -784,6 +1406,7 @@ async function initializeDatabase() {
         REFERENCES users (user_id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
   );
+  await initializeDonationCoordinationSchema(appUserIdType);
   const [currentUserColumns] = await db.query('SHOW COLUMNS FROM users');
   if (!currentUserColumns.some(column => column.Field === 'state')) {
     await db.query("ALTER TABLE users ADD COLUMN state VARCHAR(80) NOT NULL DEFAULT '' AFTER city");
@@ -829,6 +1452,17 @@ async function initializeDatabase() {
     console.warn('Admin access is disabled until ADMIN_USERNAME and ADMIN_PASSWORD are configured.');
   }
   databaseReady = true;
+  await syncBloodStockAlerts().catch(error => {
+    console.error('Initial blood-stock alert refresh failed:', error.code || error.message);
+  });
+  if (!bloodStockAlertTimer) {
+    bloodStockAlertTimer = setInterval(() => {
+      syncBloodStockAlerts().catch(error => {
+        console.error('Scheduled blood-stock alert refresh failed:', error.code || error.message);
+      });
+    }, 15 * 60 * 1000);
+    bloodStockAlertTimer.unref();
+  }
 }
 
 app.get('/api/health', async (req, res) => {
@@ -883,9 +1517,9 @@ app.get('/api/blood-requests', requireDatabase, requireSession, rateLimit(60, 60
   try {
     const [requests] = await db.execute(
       `SELECT CAST(request_id AS CHAR) AS request_id,
-              blood_group, units, urgency, city, district,
+              blood_group, component, units, urgency, city, district,
               DATE_FORMAT(needed_at, '%Y-%m-%dT%H:%i:%sZ') AS needed_at,
-              verification_status, status,
+              verification_status, status, coordination_status,
               DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at,
               user_id
        FROM blood_requests
@@ -910,6 +1544,7 @@ app.post('/api/blood-requests', rateLimit(5, 15 * 60 * 1000), requireDatabase, r
     ? req.body.patient.trim()
     : req.user.full_name;
   const bloodGroup = normalizeBloodGroup(req.body?.blood);
+  const component = typeof req.body?.component === 'string' ? req.body.component : 'whole_blood';
   const units = req.body?.units;
   const urgency = typeof req.body?.urgency === 'string' ? req.body.urgency : '';
   const hasSeparateHospitalName = typeof req.body?.hospital_name === 'string';
@@ -943,6 +1578,7 @@ app.post('/api/blood-requests', rateLimit(5, 15 * 60 * 1000), requireDatabase, r
   }
   if (!isNonEmptyString(patientReference, 100) ||
       !BLOOD_GROUPS.has(bloodGroup) ||
+      !['whole_blood', 'red_cells', 'platelets', 'plasma'].includes(component) ||
       !Number.isInteger(units) || units < 1 || units > 20 ||
       !REQUEST_URGENCIES.has(urgency) ||
       !isNonEmptyString(hospitalName, 150) ||
@@ -970,6 +1606,7 @@ app.post('/api/blood-requests', rateLimit(5, 15 * 60 * 1000), requireDatabase, r
         req.user.user_id,
         patientReference,
         bloodGroup,
+        component,
         units,
         urgency,
         hospitalDetails,
@@ -984,15 +1621,16 @@ app.post('/api/blood-requests', rateLimit(5, 15 * 60 * 1000), requireDatabase, r
     const [result] = PORTAL_SCHEMA
       ? await connection.execute(
         `INSERT INTO blood_requests
-           (requester_user_id, patient_name, blood_group, units_needed, hospital_name,
+            (requester_user_id, patient_name, blood_group, component, units_needed, hospital_name,
             hospital_address, contact_phone, urgency, needed_by, status,
             user_id, patient_reference, units, hospital_details, city, state, district,
             contact_name, needed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           req.user.user_id,
           patientReference,
           bloodGroup,
+          component,
           units,
           hospitalName,
           hospitalAddress,
@@ -1013,11 +1651,17 @@ app.post('/api/blood-requests', rateLimit(5, 15 * 60 * 1000), requireDatabase, r
       )
       : await connection.execute(
         `INSERT INTO blood_requests
-           (user_id, patient_reference, blood_group, units, urgency, hospital_details, hospital_name,
+           (user_id, patient_reference, blood_group, component, units, urgency, hospital_details, hospital_name,
             city, state, district, contact_name, contact_phone, needed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         requestValues
       );
+    await connection.execute(
+      `INSERT INTO blood_request_events
+         (request_id, actor_user_id, event_type, previous_status, new_status, details)
+       VALUES (?, ?, 'request_submitted', NULL, 'Pending', ?)`,
+      [result.insertId, req.user.user_id, JSON.stringify({ submitted_by: 'patient' })]
+    );
     let matchedDonorCount = 0;
     if (urgency === 'Urgent' && req.body.match_donors) {
       const responseDeadline = formatSqlUtcDateTime(
@@ -1032,6 +1676,7 @@ app.post('/api/blood-requests', rateLimit(5, 15 * 60 * 1000), requireDatabase, r
          WHERE d.available = 1
            AND d.last_confirmed_at IS NOT NULL
            AND d.emergency_response_consent = 1
+           AND ${DONOR_ELIGIBILITY_SQL}
            AND (
              (COALESCE(d.availability_mode, 'general') = 'general'
                AND d.availability_expires_at > UTC_TIMESTAMP())
@@ -1044,24 +1689,71 @@ app.post('/api/blood-requests', rateLimit(5, 15 * 60 * 1000), requireDatabase, r
                    AND ad.status = 'available'
                ))
            )
-           AND d.blood_group = ?
+           AND d.blood_group IN (${getCompatibleDonorBloodGroups(bloodGroup).map(() => '?').join(', ')})
            AND LOWER(d.city) = LOWER(?)
            AND LOWER(d.state) = LOWER(?)
            AND d.user_id <> ?`,
-        [result.insertId, responseDeadline, sqlNeededAt, bloodGroup, city, state, req.user.user_id]
+        [result.insertId, responseDeadline, sqlNeededAt,
+          ...getCompatibleDonorBloodGroups(bloodGroup), city, state, req.user.user_id]
       );
       matchedDonorCount = matches.affectedRows;
     }
+    const [matchingBanks] = await connection.execute(
+      `SELECT b.blood_bank_id, b.bank_name, b.address_text, b.phone, b.city, b.district, b.state,
+              s.available_units,
+              DATE_FORMAT(s.last_updated, '%Y-%m-%d') AS stock_date,
+              DATE_FORMAT(s.last_updated, '%Y-%m-%dT%H:%i:%sZ') AS last_updated
+       FROM blood_stock s
+       JOIN blood_banks b ON b.blood_bank_id = s.blood_bank_id
+       WHERE b.is_active = 1 AND (b.verification_status = 'verified' OR b.verified = 1)
+         AND s.verification_status = 'verified'
+         AND s.last_updated >= UTC_DATE()
+         AND s.last_updated < DATE_ADD(UTC_DATE(), INTERVAL 1 DAY)
+         AND s.blood_group = ? AND s.component = ? AND s.available_units >= ?
+         AND LOWER(COALESCE(b.state, '')) = LOWER(?)
+         AND (LOWER(COALESCE(b.city, '')) = LOWER(?)
+           OR LOWER(COALESCE(b.district, '')) = LOWER(?))
+       ORDER BY s.available_units ASC, b.bank_name LIMIT 50`,
+      [bloodGroup, component, units, state, city, district]
+    );
+    const [bankNotifications] = await connection.execute(
+      `INSERT IGNORE INTO blood_bank_notifications (staff_user_id, request_id, notification_type)
+       SELECT s.user_id, ?, 'emergency_request'
+       FROM blood_bank_staff s
+       JOIN blood_banks b ON b.blood_bank_id = s.bank_id
+       WHERE b.is_active = 1 AND (b.verification_status = 'verified' OR b.verified = 1)
+         AND LOWER(COALESCE(b.state, '')) = LOWER(?)
+         AND (LOWER(COALESCE(b.city, '')) = LOWER(?)
+           OR LOWER(COALESCE(b.district, '')) = LOWER(?))`,
+      [result.insertId, state, city, district]
+    );
+    await connection.execute(
+      `INSERT INTO blood_request_events
+         (request_id, actor_user_id, event_type, previous_status, new_status, details)
+       VALUES (?, ?, 'stock_matches_checked', NULL, NULL, ?)`,
+      [result.insertId, req.user.user_id, JSON.stringify({
+        matching_bank_count: matchingBanks.length,
+        staff_notifications_created: bankNotifications.affectedRows,
+        stock_deducted: false
+      })]
+    );
     await connection.commit();
     res.status(201).json({
       message: matchedDonorCount
-        ? 'Blood request saved. Matching donor notifications were created in the LifeDrop app; no email or SMS was sent, and no response or donation is guaranteed.'
+        ? 'Blood request saved. Matching donor notifications were created in the LifeDrop app; no email, SMS, or push notification was sent, and no response or donation is guaranteed.'
         : urgency === 'Urgent' && req.body.match_donors
           ? 'Blood request saved. No eligible opted-in donors matched this exact blood group and city; no notification was created.'
-          : 'Blood request saved. No donor notifications were requested; no email or SMS was sent.',
+          : 'Blood request saved. No donor notifications were requested; no email, SMS, or push notification was sent.',
       request_id: String(result.insertId),
       status: 'Pending Verification',
-      matched_donor_count: matchedDonorCount
+      matched_donor_count: matchedDonorCount,
+      matching_blood_banks: matchingBanks.map(bank => ({
+        ...bank,
+        available_units: Number(bank.available_units),
+        availability_status: 'Available'
+      })),
+      bank_staff_notifications_created: Number(bankNotifications.affectedRows),
+      inventory_reserved_or_deducted: false
     });
   } catch (error) {
     if (connection) await connection.rollback().catch(() => {});
@@ -1072,7 +1764,300 @@ app.post('/api/blood-requests', rateLimit(5, 15 * 60 * 1000), requireDatabase, r
   }
 });
 
+app.get('/api/my-blood-requests', requireDatabase, requireSession, async (req, res) => {
+  if (req.user.role !== 'patient') {
+    return res.status(403).json({ message: 'Patient accounts can view their request updates.' });
+  }
+  try {
+    const [requests] = await db.execute(
+      `SELECT CAST(request_id AS CHAR) AS request_id, blood_group, component,
+              COALESCE(units, units_needed) AS units, urgency, city, district,
+              status AS request_status, coordination_status,
+              DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS submitted_at,
+              DATE_FORMAT(needed_at, '%Y-%m-%dT%H:%i:%sZ') AS needed_at
+       FROM blood_requests WHERE user_id = ?
+       ORDER BY created_at DESC, request_id DESC LIMIT 100`,
+      [req.user.user_id]
+    );
+    const [events] = requests.length
+      ? await db.execute(
+        `SELECT CAST(e.request_id AS CHAR) AS request_id, e.event_type,
+                e.previous_status, e.new_status,
+                DATE_FORMAT(e.created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at
+         FROM blood_request_events e
+         JOIN blood_requests r ON r.request_id = e.request_id
+         WHERE r.user_id = ? AND e.event_type IN ('request_submitted', 'request_escalated', 'coordination_status')
+         ORDER BY e.created_at DESC, e.event_id DESC LIMIT 500`,
+        [req.user.user_id]
+      )
+      : [[]];
+    const eventsByRequest = new Map();
+    for (const event of events) {
+      if (!eventsByRequest.has(event.request_id)) eventsByRequest.set(event.request_id, []);
+      eventsByRequest.get(event.request_id).push(event);
+    }
+    res.set('Cache-Control', 'no-store');
+    res.json({ requests: requests.map(request => ({
+      ...request,
+      units: Number(request.units),
+      events: eventsByRequest.get(request.request_id) || []
+    })) });
+  } catch (error) {
+    console.error('Patient request status lookup failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not load your request status updates.' });
+  }
+});
+
+app.post('/api/blood-requests/:requestId/escalate', requireDatabase, requireSession,
+  rateLimit(10, 60 * 60 * 1000), async (req, res) => {
+    const requestId = req.params.requestId;
+    if (req.user.role !== 'patient') {
+      return res.status(403).json({ message: 'Only the patient who submitted the request can escalate it.' });
+    }
+    if (!/^[1-9]\d{0,19}$/.test(requestId)) {
+      return res.status(400).json({ message: 'Choose a valid emergency request.' });
+    }
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[request]] = await connection.execute(
+        `SELECT request_id, status, urgency FROM blood_requests
+         WHERE request_id = ? AND user_id = ? FOR UPDATE`,
+        [requestId, req.user.user_id]
+      );
+      if (!request) {
+        await connection.rollback();
+        return res.status(404).json({ message: 'Request not found or you do not have permission to escalate it.' });
+      }
+      if (request.urgency !== 'Urgent' || ['Fulfilled', 'Cancelled'].includes(request.status)) {
+        await connection.rollback();
+        return res.status(409).json({ message: 'Only active urgent requests can be escalated.' });
+      }
+      const [existing] = await connection.execute(
+        `SELECT event_id FROM blood_request_events
+         WHERE request_id = ? AND event_type = 'request_escalated'
+         LIMIT 1`,
+        [requestId]
+      );
+      if (existing.length) {
+        await connection.rollback();
+        return res.status(409).json({ message: 'This urgent request is already escalated to the LifeDrop service-area coordinator queue.' });
+      }
+      await connection.execute(
+        `INSERT INTO blood_request_events
+           (request_id, actor_user_id, event_type, previous_status, new_status, details)
+         VALUES (?, ?, 'request_escalated', ?, ?, ?)`,
+        [requestId, req.user.user_id, request.status, request.status,
+          JSON.stringify({ destination: 'LifeDrop service-area coordinator queue', external_delivery: false })]
+      );
+      await connection.commit();
+      res.status(202).json({
+        request_id: requestId,
+        message: 'Urgent request flagged for the matching LifeDrop coordinator queue. It has not been sent to an external service; contact the hospital or blood bank directly now.'
+      });
+    } catch (error) {
+      await connection.rollback().catch(() => {});
+      console.error('Emergency request escalation failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not escalate the emergency request.' });
+    } finally {
+      connection.release();
+    }
+  }
+);
+
+app.get('/api/blood-bank/notifications', requireDatabase, requireSession,
+  requireBloodBankStaff, async (req, res) => {
+    try {
+      const [[count], [notifications]] = await Promise.all([
+        db.execute(
+          'SELECT COUNT(*) AS unread_count FROM blood_bank_notifications WHERE staff_user_id = ? AND read_at IS NULL',
+          [req.user.user_id]
+        ),
+        db.execute(
+          `SELECT n.notification_id, CAST(r.request_id AS CHAR) AS request_id,
+                  r.blood_group, r.component, COALESCE(r.units, r.units_needed) AS units,
+                  r.urgency, r.hospital_name, r.city, r.district, r.coordination_status,
+                  DATE_FORMAT(n.created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at,
+                  DATE_FORMAT(n.read_at, '%Y-%m-%dT%H:%i:%sZ') AS read_at
+           FROM blood_bank_notifications n
+           JOIN blood_requests r ON r.request_id = n.request_id
+           WHERE n.staff_user_id = ?
+           ORDER BY n.created_at DESC LIMIT 100`,
+          [req.user.user_id]
+        )
+      ]);
+      res.set('Cache-Control', 'no-store');
+      res.json({ unread_count: Number(count[0].unread_count), notifications });
+    } catch (error) {
+      console.error('Blood-bank notifications lookup failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not load blood-bank notifications.' });
+    }
+  }
+);
+
+app.post('/api/blood-bank/notifications/:notificationId/read', requireDatabase,
+  requireSession, requireBloodBankStaff, async (req, res) => {
+    const notificationId = req.params.notificationId;
+    if (!/^[1-9]\d{0,19}$/.test(notificationId)) {
+      return res.status(400).json({ message: 'Choose a valid bank notification.' });
+    }
+    try {
+      const [result] = await db.execute(
+        `UPDATE blood_bank_notifications SET read_at = COALESCE(read_at, UTC_TIMESTAMP())
+         WHERE notification_id = ? AND staff_user_id = ?`,
+        [notificationId, req.user.user_id]
+      );
+      if (!result.affectedRows) {
+        return res.status(404).json({ message: 'Notification was not found for this staff account.' });
+      }
+      res.json({ message: 'Notification marked as read.' });
+    } catch (error) {
+      console.error('Blood-bank notification read update failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not update the notification.' });
+    }
+  }
+);
+
+app.get('/api/blood-bank/emergency-requests', requireDatabase, requireSession,
+  requireBloodBankStaff, async (req, res) => {
+    try {
+      const [requests] = await db.execute(
+        `SELECT CAST(r.request_id AS CHAR) AS request_id, r.blood_group, r.component,
+          COALESCE(r.units, r.units_needed) AS units, r.urgency, r.city, r.district,
+          r.hospital_name, r.hospital_address, r.contact_name, r.contact_phone,
+          r.coordination_status,
+                  EXISTS (SELECT 1 FROM blood_request_events e
+                          WHERE e.request_id = r.request_id
+                            AND e.event_type = 'request_escalated') AS is_escalated,
+                DATE_FORMAT(r.created_at, '%Y-%m-%dT%H:%i:%sZ') AS submitted_at,
+                DATE_FORMAT(r.needed_at, '%Y-%m-%dT%H:%i:%sZ') AS needed_at
+         FROM blood_requests r
+         JOIN blood_banks b ON b.blood_bank_id = ?
+         WHERE r.coordination_status IN ('Pending', 'Under Review', 'Accepted', 'In Progress')
+           AND r.needed_at > UTC_TIMESTAMP()
+           AND (r.coordinator_bank_id = b.blood_bank_id OR (
+             r.coordinator_bank_id IS NULL
+             AND LOWER(r.state) = LOWER(COALESCE(b.state, ''))
+             AND (LOWER(r.city) = LOWER(COALESCE(b.city, ''))
+               OR LOWER(r.district) = LOWER(COALESCE(b.district, '')))
+           ))
+         ORDER BY is_escalated DESC,
+                  CASE WHEN LOWER(r.urgency) = 'urgent' THEN 0 ELSE 1 END,
+                  r.needed_at, r.created_at
+         LIMIT 200`,
+        [req.bloodBank.bank_id]
+      );
+      res.set('Cache-Control', 'no-store');
+      res.json({ requests: requests.map(request => ({ ...request, units: Number(request.units) })) });
+    } catch (error) {
+      console.error('Blood-bank emergency request lookup failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not load requests for this blood bank.' });
+    }
+  }
+);
+
+app.post('/api/blood-bank/emergency-requests/:requestId/status', requireDatabase, requireSession,
+  requireBloodBankStaff, rateLimit(60, 60 * 60 * 1000), async (req, res) => {
+    const requestId = req.params.requestId;
+    const status = req.body?.status;
+    const allowedStatuses = new Set(['Under Review', 'Accepted', 'Rejected', 'In Progress', 'Fulfilled', 'Cancelled']);
+    if (!/^[1-9]\d{0,19}$/.test(requestId) || !allowedStatuses.has(status) ||
+        (status === 'Fulfilled' && req.body?.fulfillment_confirmed !== true)) {
+      return res.status(400).json({ message: 'Choose a valid request status. Fulfilled requires explicit confirmation that the request was fulfilled.' });
+    }
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[request]] = await connection.execute(
+        `SELECT request_id, coordination_status, coordinator_bank_id
+         FROM blood_requests WHERE request_id = ? FOR UPDATE`,
+        [requestId]
+      );
+      if (!request) {
+        await connection.rollback();
+        return res.status(404).json({ message: 'Emergency request was not found.' });
+      }
+      const [inScope] = await connection.execute(
+        `SELECT r.request_id
+         FROM blood_requests r JOIN blood_banks b ON b.blood_bank_id = ?
+         WHERE r.request_id = ? AND (
+           r.coordinator_bank_id = b.blood_bank_id OR (
+             r.coordinator_bank_id IS NULL
+             AND LOWER(r.state) = LOWER(COALESCE(b.state, ''))
+             AND (LOWER(r.city) = LOWER(COALESCE(b.city, ''))
+               OR LOWER(r.district) = LOWER(COALESCE(b.district, '')))
+           )
+         ) LIMIT 1`,
+        [req.bloodBank.bank_id, requestId]
+      );
+      if (!inScope.length) {
+        await connection.rollback();
+        return res.status(404).json({ message: 'Request not found for this blood bank.' });
+      }
+      if (request.coordinator_bank_id && request.coordinator_bank_id !== req.bloodBank.bank_id) {
+        await connection.rollback();
+        return res.status(409).json({ message: 'This request is assigned to another blood bank.' });
+      }
+      const validTransition = status === 'Under Review'
+        ? request.coordination_status === 'Pending'
+        : status === 'Accepted'
+          ? ['Pending', 'Under Review'].includes(request.coordination_status)
+        : status === 'Rejected'
+          ? ['Pending', 'Under Review'].includes(request.coordination_status)
+          : status === 'In Progress'
+            ? ['Accepted', 'In Progress'].includes(request.coordination_status)
+            : status === 'Fulfilled'
+              ? ['Accepted', 'In Progress'].includes(request.coordination_status)
+              : status === 'Cancelled'
+                ? !['Fulfilled', 'Cancelled'].includes(request.coordination_status)
+                : false;
+      if (!validTransition) {
+        await connection.rollback();
+        return res.status(409).json({ message: `Cannot change ${request.coordination_status} to ${status}.` });
+      }
+      await connection.execute(
+        `UPDATE blood_requests
+         SET coordination_status = ?, coordinator_user_id = ?, coordinator_bank_id = ?,
+             coordination_updated_at = UTC_TIMESTAMP()
+         WHERE request_id = ?`,
+        [status, req.user.user_id, req.bloodBank.bank_id, requestId]
+      );
+      await connection.execute(
+        `INSERT INTO blood_request_events
+           (request_id, actor_user_id, event_type, previous_status, new_status, details)
+         VALUES (?, ?, 'coordination_status', ?, ?, ?)`,
+        [requestId, req.user.user_id, request.coordination_status, status,
+          JSON.stringify({ bank_id: req.bloodBank.bank_id, bank_name: req.bloodBank.bank_name,
+            fulfillment_confirmed: status === 'Fulfilled' })]
+      );
+      await connection.commit();
+      res.json({
+        request_id: requestId,
+        coordination_status: status,
+        message: status === 'Accepted'
+          ? 'Your blood bank accepted the request. This is not confirmation that blood has been issued.'
+          : status === 'Fulfilled'
+            ? 'The blood bank marked the request fulfilled.'
+            : `The request status was updated to ${status}.`
+      });
+    } catch (error) {
+      await connection.rollback().catch(() => {});
+      console.error('Blood-bank request status update failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not update the request status.' });
+    } finally {
+      connection.release();
+    }
+  }
+);
+
 async function notifyAdditionalMatchingDonors(requestId) {
+  const [[request]] = await db.execute(
+    'SELECT blood_group FROM blood_requests WHERE request_id = ? LIMIT 1',
+    [requestId]
+  );
+  if (!request) return 0;
+  const compatibleBloodGroups = getCompatibleDonorBloodGroups(request.blood_group);
+  if (!compatibleBloodGroups.length) return 0;
   const [[progress]] = await db.execute(
     `SELECT COUNT(*) AS active_responses
      FROM donor_request_responses
@@ -1088,7 +2073,7 @@ async function notifyAdditionalMatchingDonors(requestId) {
      SELECT r.request_id, d.user_id, 'pending', UTC_TIMESTAMP(),
             DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE)
      FROM blood_requests r
-     JOIN donors d ON d.blood_group = r.blood_group
+     JOIN donors d ON d.blood_group IN (${compatibleBloodGroups.map(() => '?').join(', ')})
      JOIN users u ON u.user_id = d.user_id AND u.role = 'donor'
      WHERE r.request_id = ?
        AND LOWER(r.urgency) = 'urgent'
@@ -1097,6 +2082,7 @@ async function notifyAdditionalMatchingDonors(requestId) {
        AND d.available = 1
        AND d.last_confirmed_at IS NOT NULL
        AND d.emergency_response_consent = 1
+      AND ${DONOR_ELIGIBILITY_SQL}
        AND LOWER(d.city) = LOWER(r.city)
        AND LOWER(d.state) = LOWER(r.state)
        AND (
@@ -1116,7 +2102,7 @@ async function notifyAdditionalMatchingDonors(requestId) {
          WHERE existing_response.request_id = r.request_id
            AND existing_response.donor_user_id = d.user_id
        )`,
-    [DONOR_RESPONSE_WINDOW_MINUTES, requestId]
+    [DONOR_RESPONSE_WINDOW_MINUTES, ...compatibleBloodGroups, requestId]
   );
   return result.affectedRows;
 }
@@ -1175,11 +2161,13 @@ app.get(['/api/donor/notifications', '/api/donor/emergency-requests'],
                          AND ad.status = 'available'
                      ) THEN 'Available on selected date'
                 WHEN d.last_confirmed_at IS NULL THEN 'Unconfirmed'
+                WHEN d.available = 0 AND d.availability_status = 'temporarily_unavailable' THEN 'Temporarily Unavailable'
                 WHEN d.available = 0 AND d.availability_status = 'not_available' THEN 'Not Available'
                 ELSE 'Unconfirmed'
               END AS donor_availability_status,
               CASE WHEN d.available = 1 AND d.last_confirmed_at IS NOT NULL
                          AND d.emergency_response_consent = 1
+                         AND ${DONOR_ELIGIBILITY_SQL}
                          AND (
                            (COALESCE(d.availability_mode, 'general') = 'general'
                              AND d.availability_expires_at > UTC_TIMESTAMP())
@@ -1274,6 +2262,7 @@ app.post('/api/donor/emergency-requests/:requestId/response', requireDatabase, r
              d.available = 1
              AND d.last_confirmed_at IS NOT NULL
              AND d.emergency_response_consent = 1
+             AND ${DONOR_ELIGIBILITY_SQL}
              AND (
                (COALESCE(d.availability_mode, 'general') = 'general'
                  AND d.availability_expires_at > UTC_TIMESTAMP())
@@ -1402,6 +2391,7 @@ app.get('/api/my-emergency-responses', requireDatabase, requireSession, async (r
                 WHEN d.available = 1 AND d.last_confirmed_at IS NOT NULL
                      AND d.availability_expires_at > UTC_TIMESTAMP() THEN 'Available'
                 WHEN d.last_confirmed_at IS NULL THEN 'Unconfirmed'
+                WHEN d.available = 0 AND d.availability_status = 'temporarily_unavailable' THEN 'Temporarily Unavailable'
                 WHEN d.available = 0 AND d.availability_status = 'not_available' THEN 'Not Available'
                 ELSE 'Unconfirmed'
               END AS donor_availability_status,
@@ -2006,7 +2996,7 @@ app.post('/api/admin/logout', (req, res) => {
 
 app.get('/api/admin/dashboard', requireDatabase, requireAdminConfigured, requireAdmin, async (req, res) => {
   try {
-    const [[countRows], [donors], [patients], [patientRequests], [bloodRequests]] = await Promise.all([
+    const [[countRows], [donors], [patients], [patientRequests], [bloodRequests], [recentDonations]] = await Promise.all([
       db.execute(
         `SELECT
            (SELECT COUNT(*) FROM users WHERE role IN ('donor', 'patient', 'recipient')) AS total_registrations,
@@ -2015,20 +3005,55 @@ app.get('/api/admin/dashboard', requireDatabase, requireAdminConfigured, require
            ((SELECT COUNT(*) FROM patients) + (SELECT COUNT(*) FROM blood_requests)) AS patient_request_count,
            (SELECT COUNT(*) FROM donors d WHERE (${DONOR_AVAILABILITY_STATUS_SQL}) = 'available') AS available_donor_count,
            (SELECT COUNT(*) FROM donors d WHERE (${DONOR_AVAILABILITY_STATUS_SQL}) = 'unavailable') AS unavailable_donor_count,
+           (SELECT COUNT(*) FROM donors d WHERE (${DONOR_AVAILABILITY_STATUS_SQL}) = 'temporarily_unavailable') AS temporarily_unavailable_donor_count,
            (SELECT COUNT(*) FROM donors d WHERE (${DONOR_AVAILABILITY_STATUS_SQL}) = 'unconfirmed') AS unconfirmed_donor_count,
-           (SELECT COUNT(*) FROM donors d WHERE (${DONOR_AVAILABILITY_STATUS_SQL}) = 'expired') AS expired_donor_count`
+           (SELECT COUNT(*) FROM donors d WHERE (${DONOR_AVAILABILITY_STATUS_SQL}) = 'expired') AS expired_donor_count,
+           (SELECT COUNT(*) FROM donors d
+            WHERE COALESCE(d.next_eligible_date,
+              DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)) > UTC_DATE()) AS donors_in_cooldown,
+           (SELECT COUNT(*) FROM donors d
+            WHERE d.last_donation_date IS NOT NULL
+              AND COALESCE(d.next_eligible_date,
+                DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)) <= UTC_DATE()
+              AND NOT (${DONOR_ELIGIBILITY_SQL})) AS donors_awaiting_eligibility_review,
+           (SELECT COUNT(*) FROM donors d
+            WHERE (${DONOR_AVAILABILITY_STATUS_SQL}) = 'expired') AS stale_availability_count,
+           (SELECT COUNT(*) FROM blood_requests WHERE status IN ('Pending Verification', 'Under Review')) AS pending_emergency_requests`
       ),
       db.execute(
         `SELECT u.user_id, u.username, u.full_name, u.email, u.age, u.gender, u.blood_group,
                 u.phone, u.city, u.state, u.place,
                 DATE_FORMAT(u.created_at, '%Y-%m-%dT%H:%i:%sZ') AS registered_at,
-                d.last_donation_date,
+                DATE_FORMAT(d.last_donation_date, '%Y-%m-%d') AS last_donation_date,
+                DATE_FORMAT(COALESCE(d.next_eligible_date,
+                  DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)),
+                  '%Y-%m-%d') AS next_eligible_date,
+                CASE
+                  WHEN COALESCE(d.next_eligible_date,
+                    DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)) > UTC_DATE()
+                    THEN 'in_cooldown'
+                  WHEN (${DONOR_ELIGIBILITY_SQL}) THEN 'eligible'
+                  ELSE 'awaiting_review'
+                END AS eligibility_status,
+                (SELECT er.decision FROM donor_eligibility_reviews er
+                 WHERE er.donor_user_id = d.user_id
+                 ORDER BY er.reviewed_at DESC, er.review_id DESC LIMIT 1) AS eligibility_review_decision,
+                (SELECT reviewer.full_name FROM donor_eligibility_reviews er
+                 JOIN users reviewer ON reviewer.user_id = er.reviewed_by_user_id
+                 WHERE er.donor_user_id = d.user_id
+                 ORDER BY er.reviewed_at DESC, er.review_id DESC LIMIT 1) AS eligibility_reviewed_by,
+                (SELECT DATE_FORMAT(er.reviewed_at, '%Y-%m-%dT%H:%i:%sZ')
+                 FROM donor_eligibility_reviews er
+                 WHERE er.donor_user_id = d.user_id
+                 ORDER BY er.reviewed_at DESC, er.review_id DESC LIMIT 1) AS eligibility_reviewed_at,
+                DATE_FORMAT(d.last_confirmed_at, '%Y-%m-%dT%H:%i:%sZ') AS availability_confirmed_at,
                 ${DONOR_AVAILABILITY_STATUS_SQL} AS availability_status_code,
                 CASE ${DONOR_AVAILABILITY_STATUS_SQL}
                   WHEN 'available' THEN 1 ELSE 0
                 END AS is_available,
                 CASE
                   WHEN (${DONOR_AVAILABILITY_STATUS_SQL}) = 'available' THEN 'Available'
+                  WHEN (${DONOR_AVAILABILITY_STATUS_SQL}) = 'temporarily_unavailable' THEN 'Temporarily Unavailable'
                   WHEN (${DONOR_AVAILABILITY_STATUS_SQL}) = 'unavailable' THEN 'Not Available'
                   WHEN (${DONOR_AVAILABILITY_STATUS_SQL}) = 'expired' THEN 'Expired'
                   ELSE 'Unconfirmed'
@@ -2094,6 +3119,18 @@ app.get('/api/admin/dashboard', requireDatabase, requireAdminConfigured, require
                      OR (dr.response = 'pending' AND dr.response_deadline <= UTC_TIMESTAMP()))) AS responses_no_response
          FROM blood_requests
          ORDER BY created_at DESC, request_id DESC`
+      ),
+      db.execute(
+        `SELECT dh.donation_id, u.full_name, d.blood_group,
+                DATE_FORMAT(dh.donation_date, '%Y-%m-%d') AS donation_date,
+                DATE_FORMAT(dh.next_eligible_date, '%Y-%m-%d') AS next_eligible_date,
+                DATE_FORMAT(dh.verified_at, '%Y-%m-%dT%H:%i:%sZ') AS verified_at
+         FROM donor_donation_history dh
+         JOIN users u ON u.user_id = dh.donor_user_id
+         JOIN donors d ON d.user_id = dh.donor_user_id
+         WHERE dh.verification_status = 'verified'
+         ORDER BY dh.verified_at DESC, dh.donation_id DESC
+         LIMIT 10`
       )
     ]);
     const counts = countRows[0];
@@ -2105,13 +3142,19 @@ app.get('/api/admin/dashboard', requireDatabase, requireAdminConfigured, require
         patient_request_count: Number(counts.patient_request_count),
         available_donor_count: Number(counts.available_donor_count),
         unavailable_donor_count: Number(counts.unavailable_donor_count),
+        temporarily_unavailable_donor_count: Number(counts.temporarily_unavailable_donor_count),
         unconfirmed_donor_count: Number(counts.unconfirmed_donor_count),
-        expired_donor_count: Number(counts.expired_donor_count)
+        expired_donor_count: Number(counts.expired_donor_count),
+        donors_in_cooldown: Number(counts.donors_in_cooldown),
+        donors_awaiting_eligibility_review: Number(counts.donors_awaiting_eligibility_review),
+        stale_availability_count: Number(counts.stale_availability_count),
+        pending_emergency_requests: Number(counts.pending_emergency_requests)
       },
       donors,
       patients,
       patient_requests: patientRequests,
       blood_requests: bloodRequests,
+      recent_verified_donations: recentDonations,
       refreshed_at: new Date().toISOString()
     });
   } catch (error) {
@@ -2120,12 +3163,609 @@ app.get('/api/admin/dashboard', requireDatabase, requireAdminConfigured, require
   }
 });
 
+app.get('/api/admin/donations', requireDatabase, requireAdminConfigured, requireAdmin, async (req, res) => {
+  try {
+    const [[donors], [donations], [corrections]] = await Promise.all([
+      db.execute(
+        `SELECT d.user_id AS donor_user_id, u.full_name, d.blood_group
+         FROM donors d JOIN users u ON u.user_id = d.user_id AND u.role = 'donor'
+         ORDER BY u.full_name, d.user_id`
+      ),
+      db.execute(
+        `SELECT dh.donation_id, dh.donor_user_id, u.full_name, d.blood_group,
+                DATE_FORMAT(dh.donation_date, '%Y-%m-%d') AS donation_date,
+                dh.eligibility_interval_months,
+                DATE_FORMAT(dh.next_eligible_date, '%Y-%m-%d') AS next_eligible_date,
+                dh.verification_status, dh.recorded_by_admin_username,
+                dh.verified_by_admin_username,
+                DATE_FORMAT(dh.verified_at, '%Y-%m-%dT%H:%i:%sZ') AS verified_at,
+                dh.notes
+         FROM donor_donation_history dh
+         JOIN users u ON u.user_id = dh.donor_user_id
+         JOIN donors d ON d.user_id = dh.donor_user_id
+         ORDER BY dh.donation_date DESC, dh.donation_id DESC
+         LIMIT 500`
+      ),
+      db.execute(
+        `SELECT c.correction_id, c.donation_id, u.full_name,
+                DATE_FORMAT(c.previous_donation_date, '%Y-%m-%d') AS previous_donation_date,
+                DATE_FORMAT(c.corrected_donation_date, '%Y-%m-%d') AS corrected_donation_date,
+                a.username AS corrected_by,
+                DATE_FORMAT(c.corrected_at, '%Y-%m-%dT%H:%i:%sZ') AS corrected_at,
+                c.correction_note
+         FROM donor_donation_history_corrections c
+         JOIN users u ON u.user_id = c.donor_user_id
+         JOIN admin_users a ON a.admin_id = c.corrected_by_admin_id
+         ORDER BY c.corrected_at DESC, c.correction_id DESC
+         LIMIT 500`
+      )
+    ]);
+    res.set('Cache-Control', 'no-store');
+    res.json({ donors, donations, corrections, eligibility_interval_months: DONATION_ELIGIBILITY_MONTHS });
+  } catch (error) {
+    console.error('Admin donation history lookup failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not load donation history.' });
+  }
+});
+
+app.patch('/api/admin/donations/:donationId', requireDatabase, requireAdminConfigured,
+  requireAdmin, rateLimit(30, 60 * 60 * 1000), async (req, res) => {
+    const donationId = Number(req.params.donationId);
+    const donationDate = req.body?.donation_date;
+    const correctionNote = typeof req.body?.correction_note === 'string'
+      ? req.body.correction_note.trim()
+      : '';
+    const today = new Date().toISOString().slice(0, 10);
+    if (!Number.isSafeInteger(donationId) || donationId < 1 ||
+        !isValidDonationDate(donationDate, today) ||
+        !correctionNote || correctionNote.length > 500) {
+      return res.status(400).json({ message: 'Enter a valid non-future donation date and a correction note under 500 characters.' });
+    }
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[donation]] = await connection.execute(
+        `SELECT donation_id, donor_user_id, donation_date, verification_status
+         FROM donor_donation_history WHERE donation_id = ? FOR UPDATE`,
+        [donationId]
+      );
+      if (!donation || donation.verification_status !== 'verified') {
+        await connection.rollback();
+        return res.status(404).json({ message: 'Verified donation record was not found.' });
+      }
+      const previousDonationDate = formatDatabaseDateOnly(donation.donation_date);
+      if (previousDonationDate === donationDate) {
+        await connection.rollback();
+        return res.status(400).json({ message: 'The corrected date must differ from the current record.' });
+      }
+      const nextReviewDate = addCalendarMonths(donationDate, DONATION_ELIGIBILITY_MONTHS);
+      await connection.execute(
+        `INSERT INTO donor_donation_history_corrections
+           (donation_id, donor_user_id, previous_donation_date, corrected_donation_date,
+            corrected_by_admin_id, correction_note, corrected_at)
+         VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())`,
+        [donationId, donation.donor_user_id, previousDonationDate,
+          donationDate, req.admin.admin_id, correctionNote]
+      );
+      await connection.execute(
+        `UPDATE donor_donation_history
+         SET donation_date = ?, eligibility_interval_months = ?, next_eligible_date = ?,
+             verified_by_admin_username = ?, verified_at = UTC_TIMESTAMP()
+         WHERE donation_id = ?`,
+        [donationDate, DONATION_ELIGIBILITY_MONTHS, nextReviewDate,
+          req.admin.username, donationId]
+      );
+      const [[latestDonation]] = await connection.execute(
+        `SELECT donation_date, next_eligible_date FROM donor_donation_history
+         WHERE donor_user_id = ? AND verification_status = 'verified'
+         ORDER BY donation_date DESC, donation_id DESC LIMIT 1`,
+        [donation.donor_user_id]
+      );
+      await connection.execute(
+        `UPDATE donors
+         SET last_donation_date = ?, next_eligible_date = ?, available = 0, is_available = 0,
+             availability_status = 'not_available', availability_mode = 'unavailable',
+             availability_expires_at = NULL, available_until = NULL,
+             public_contact_consent = 0, emergency_response_consent = 0
+         WHERE user_id = ?`,
+        [latestDonation.donation_date, latestDonation.next_eligible_date, donation.donor_user_id]
+      );
+      if (PORTAL_SCHEMA) {
+        await connection.execute(
+          `INSERT INTO donor_availability
+             (donor_user_id, is_available, confirmed_at, expires_at)
+           VALUES (?, 0, UTC_TIMESTAMP(), NULL)
+           ON DUPLICATE KEY UPDATE is_available = 0, confirmed_at = UTC_TIMESTAMP(), expires_at = NULL`,
+          [donation.donor_user_id]
+        );
+      }
+      await connection.commit();
+      res.json({
+        donation_id: donationId,
+        donation_date: donationDate,
+        next_review_date: nextReviewDate,
+        message: 'Donation date corrected with an audit record. The donor must complete a new recovery period, medical review, and availability confirmation.'
+      });
+    } catch (error) {
+      await connection.rollback().catch(() => {});
+      console.error('Donation correction failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not correct the donation record.' });
+    } finally {
+      connection.release();
+    }
+  });
+
+app.get('/api/admin/eligibility-requests', requireDatabase, requireAdminConfigured,
+  requireAdmin, async (req, res) => {
+    try {
+      const [[requests], [reviews]] = await Promise.all([
+        db.execute(
+        `SELECT r.request_id, r.donor_user_id, u.full_name, d.blood_group,
+                DATE_FORMAT(r.requested_at, '%Y-%m-%dT%H:%i:%sZ') AS requested_at,
+                r.request_status,
+                a.username AS reviewed_by,
+                DATE_FORMAT(r.reviewed_at, '%Y-%m-%dT%H:%i:%sZ') AS reviewed_at,
+                r.instructions,
+                DATE_FORMAT(d.last_donation_date, '%Y-%m-%d') AS last_donation_date,
+                DATE_FORMAT(COALESCE(d.next_eligible_date,
+                  DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)),
+                  '%Y-%m-%d') AS next_review_date,
+                (SELECT er.decision FROM donor_eligibility_reviews er
+                 WHERE er.donor_user_id = d.user_id
+                 ORDER BY er.reviewed_at DESC, er.review_id DESC LIMIT 1) AS latest_staff_decision
+         FROM donor_eligibility_review_requests r
+         JOIN users u ON u.user_id = r.donor_user_id
+         JOIN donors d ON d.user_id = r.donor_user_id
+         LEFT JOIN admin_users a ON a.admin_id = r.reviewed_by_admin_id
+         ORDER BY CASE WHEN r.request_status = 'pending' THEN 0 ELSE 1 END,
+                  r.requested_at DESC
+         LIMIT 250`
+        ),
+        db.execute(
+          `SELECT er.review_id, er.donor_user_id, u.full_name, d.blood_group,
+                  er.decision, a.full_name AS reviewed_by,
+                  DATE_FORMAT(er.reviewed_at, '%Y-%m-%dT%H:%i:%sZ') AS reviewed_at,
+                  er.notes
+           FROM donor_eligibility_reviews er
+           JOIN users u ON u.user_id = er.donor_user_id
+           JOIN donors d ON d.user_id = er.donor_user_id
+           JOIN users a ON a.user_id = er.reviewed_by_user_id
+           ORDER BY er.reviewed_at DESC, er.review_id DESC
+           LIMIT 250`
+        )
+      ]);
+      res.set('Cache-Control', 'no-store');
+      res.json({ requests, reviews });
+    } catch (error) {
+      console.error('Admin eligibility request queue lookup failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not load eligibility review requests.' });
+    }
+  });
+
+app.patch('/api/admin/eligibility-requests/:requestId', requireDatabase,
+  requireAdminConfigured, requireAdmin, rateLimit(30, 60 * 60 * 1000), async (req, res) => {
+    const requestId = Number(req.params.requestId);
+    const decision = req.body?.decision;
+    const instructions = typeof req.body?.instructions === 'string' ? req.body.instructions.trim() : '';
+    if (!Number.isSafeInteger(requestId) || requestId < 1 ||
+        !['approved', 'rejected'].includes(decision) || instructions.length > 500 ||
+        (decision === 'rejected' && !instructions)) {
+      return res.status(400).json({ message: 'Choose approve or reject and provide instructions for a rejection.' });
+    }
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[request]] = await connection.execute(
+        `SELECT r.request_id, r.donor_user_id, r.request_status,
+                COALESCE(d.next_eligible_date,
+                  DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)) AS next_review_date
+         FROM donor_eligibility_review_requests r
+         JOIN donors d ON d.user_id = r.donor_user_id
+         WHERE r.request_id = ? FOR UPDATE`,
+        [requestId]
+      );
+      if (!request || request.request_status !== 'pending') {
+        await connection.rollback();
+        return res.status(404).json({ message: 'Pending eligibility review request was not found.' });
+      }
+      if (decision === 'approved') {
+        const [[screening]] = await connection.execute(
+          `SELECT review_status, submitted_at, health_data_consent_at
+           FROM donor_health_screenings WHERE donor_user_id = ?
+           ORDER BY submitted_at DESC, screening_id DESC LIMIT 1`,
+          [request.donor_user_id]
+        );
+        const [[latestDonation]] = await connection.execute(
+          `SELECT MAX(verified_at) AS verified_at
+           FROM donor_donation_history
+           WHERE donor_user_id = ? AND verification_status = 'verified'`,
+          [request.donor_user_id]
+        );
+        const screenCurrent = screening?.review_status === 'Cleared' &&
+          screening.health_data_consent_at &&
+          (!latestDonation.verified_at ||
+            new Date(screening.submitted_at).getTime() >= new Date(latestDonation.verified_at).getTime());
+        if (!screenCurrent || (request.next_review_date &&
+            new Date(request.next_review_date).toISOString().slice(0, 10) >
+              new Date().toISOString().slice(0, 10))) {
+          await connection.rollback();
+          return res.status(409).json({ message: 'A current cleared screening and completed recovery period are required to accept this review request.' });
+        }
+      }
+      await connection.execute(
+        `UPDATE donor_eligibility_review_requests
+         SET request_status = ?, reviewed_by_admin_id = ?, reviewed_at = UTC_TIMESTAMP(),
+             instructions = ?
+         WHERE request_id = ? AND request_status = 'pending'`,
+        [decision, req.admin.admin_id, instructions || null, requestId]
+      );
+      await connection.commit();
+      res.json({
+        request_status: decision,
+        message: decision === 'approved'
+          ? 'Review request accepted and recorded. This is not medical eligibility approval; qualified blood-bank staff must make the eligibility decision.'
+          : 'Review request rejected with instructions. The donor remains excluded from matching until a qualified eligibility review is completed.'
+      });
+    } catch (error) {
+      await connection.rollback().catch(() => {});
+      console.error('Admin eligibility request review failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not update the eligibility review request.' });
+    } finally {
+      connection.release();
+    }
+  });
+
+app.post('/api/admin/donors/:donorId/donations', requireDatabase, requireAdminConfigured,
+  requireAdmin, rateLimit(30, 60 * 60 * 1000), async (req, res) => {
+    const donorId = Number(req.params.donorId);
+    const donationDate = req.body?.donation_date;
+    const notes = typeof req.body?.notes === 'string' ? req.body.notes.trim() : '';
+    const today = new Date().toISOString().slice(0, 10);
+    if (!Number.isSafeInteger(donorId) || donorId < 1 ||
+        !isValidDonationDate(donationDate, today) || notes.length > 500) {
+      return res.status(400).json({ message: 'Choose a donor, enter a valid donation date that is not in the future, and keep notes under 500 characters.' });
+    }
+    const nextEligibleDate = addCalendarMonths(donationDate, DONATION_ELIGIBILITY_MONTHS);
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[donor]] = await connection.execute(
+        `SELECT d.user_id FROM donors d
+         JOIN users u ON u.user_id = d.user_id AND u.role = 'donor'
+         WHERE d.user_id = ? FOR UPDATE`,
+        [donorId]
+      );
+      if (!donor) {
+        await connection.rollback();
+        return res.status(404).json({ message: 'Donor profile was not found.' });
+      }
+      const [result] = await connection.execute(
+        `INSERT INTO donor_donation_history
+           (donor_user_id, donation_date, eligibility_interval_months, next_eligible_date,
+            verification_status, recorded_by_admin_username, verified_by_admin_username,
+            verified_at, notes)
+         VALUES (?, ?, ?, ?, 'verified', ?, ?, UTC_TIMESTAMP(), ?)`,
+        [donorId, donationDate, DONATION_ELIGIBILITY_MONTHS, nextEligibleDate,
+          req.admin.username, req.admin.username, notes || null]
+      );
+      await connection.execute(
+        `UPDATE donors
+         SET last_donation_date = ?, next_eligible_date = ?, available = 0, is_available = 0,
+             availability_status = 'not_available', availability_mode = 'unavailable',
+             availability_expires_at = NULL, available_until = NULL,
+             public_contact_consent = 0, emergency_response_consent = 0
+         WHERE user_id = ?`,
+        [donationDate, nextEligibleDate, donorId]
+      );
+      if (PORTAL_SCHEMA) {
+        await connection.execute(
+          `INSERT INTO donor_availability
+             (donor_user_id, is_available, confirmed_at, expires_at)
+           VALUES (?, 0, UTC_TIMESTAMP(), NULL)
+           ON DUPLICATE KEY UPDATE is_available = 0, confirmed_at = UTC_TIMESTAMP(), expires_at = NULL`,
+          [donorId]
+        );
+      }
+      await connection.commit();
+      res.status(201).json({
+        donation_id: result.insertId,
+        donation_date: donationDate,
+        next_eligible_date: nextEligibleDate,
+        verification_status: 'verified',
+        message: 'Donation recorded and verified. The donor is excluded from matching until the interval passes and qualified staff make a new eligibility decision.'
+      });
+    } catch (error) {
+      await connection.rollback().catch(() => {});
+      console.error('Donation record failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not record the completed donation.' });
+    } finally {
+      connection.release();
+    }
+  }
+);
+
+app.get('/api/admin/blood-stock', requireDatabase, requireAdminConfigured, requireAdmin, async (req, res) => {
+  try {
+    await syncBloodStockAlerts();
+    const [[banks], [stocks], [thresholds], [alerts], [thresholdHistory]] = await Promise.all([
+      db.execute(
+        `SELECT b.blood_bank_id, b.bank_name, b.address_text, b.phone, b.city, b.district, b.state,
+                b.verification_status, b.is_active,
+                DATE_FORMAT(b.created_at, '%Y-%m-%dT%H:%i:%sZ') AS registered_at,
+                (SELECT MAX(s.last_updated) FROM blood_stock s
+                 WHERE s.blood_bank_id = b.blood_bank_id) AS last_update_at,
+                EXISTS(SELECT 1 FROM blood_stock s
+                 WHERE s.blood_bank_id = b.blood_bank_id
+                   AND s.last_updated >= UTC_DATE()
+                   AND s.last_updated < DATE_ADD(UTC_DATE(), INTERVAL 1 DAY)) AS update_submitted_today,
+                (SELECT COUNT(*) FROM blood_stock s
+                 WHERE s.blood_bank_id = b.blood_bank_id
+                   AND s.verification_status = 'pending') AS pending_stock_count,
+                (SELECT COUNT(*) FROM blood_stock s
+                 WHERE s.blood_bank_id = b.blood_bank_id
+                   AND s.verification_status = 'rejected') AS rejected_stock_count
+         FROM blood_banks b ORDER BY b.bank_name`
+      ),
+      db.execute(
+        `SELECT s.stock_id, s.blood_bank_id, b.bank_name, b.address_text, b.phone, b.email,
+                b.city, b.district, b.state, s.blood_group, s.component,
+                s.physical_units, s.reserved_units, s.issued_units, s.discarded_units,
+                s.total_eligible_units, s.available_units,
+                COALESCE(t.low_stock_threshold, s.low_stock_threshold, 0) AS threshold,
+                s.verification_status,
+                s.reviewed_by_admin_id,
+                DATE_FORMAT(s.reviewed_at, '%Y-%m-%dT%H:%i:%sZ') AS reviewed_at,
+                DATE_FORMAT(s.last_updated, '%Y-%m-%dT%H:%i:%sZ') AS last_updated
+         FROM blood_stock s JOIN blood_banks b ON b.blood_bank_id = s.blood_bank_id
+         LEFT JOIN blood_stock_thresholds t ON t.blood_bank_id = s.blood_bank_id
+           AND t.blood_group = s.blood_group AND t.component = s.component
+         ORDER BY b.bank_name, s.blood_group, s.component`
+      ),
+      db.execute(
+        `SELECT t.blood_bank_id, b.bank_name, t.blood_group, t.component,
+                t.low_stock_threshold, t.updated_by_admin_id,
+                DATE_FORMAT(t.updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updated_at
+         FROM blood_stock_thresholds t JOIN blood_banks b ON b.blood_bank_id = t.blood_bank_id
+         ORDER BY b.bank_name, t.blood_group, t.component`
+      ),
+      db.execute(
+        `SELECT a.alert_id, a.blood_bank_id, b.bank_name, a.blood_group, a.component,
+                a.alert_type, a.message,
+                DATE_FORMAT(a.last_triggered_at, '%Y-%m-%dT%H:%i:%sZ') AS last_triggered_at
+         FROM blood_stock_alerts a JOIN blood_banks b ON b.blood_bank_id = a.blood_bank_id
+         WHERE a.is_active = 1 ORDER BY a.last_triggered_at DESC LIMIT 500`
+      ),
+      db.execute(
+        `SELECT h.threshold_history_id, h.blood_bank_id, b.bank_name, h.blood_group,
+                h.component, h.previous_threshold, h.new_threshold,
+                a.username AS admin_username,
+                DATE_FORMAT(h.created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at
+         FROM blood_stock_threshold_history h
+         JOIN blood_banks b ON b.blood_bank_id = h.blood_bank_id
+         JOIN admin_users a ON a.admin_id = h.updated_by_admin_id
+         ORDER BY h.created_at DESC LIMIT 100`
+      )
+    ]);
+    res.set('Cache-Control', 'no-store');
+    res.json({ banks, stocks: stocks.map(stock => formatBloodStockRow(stock)), thresholds, alerts, threshold_history: thresholdHistory,
+      freshness_policy: 'UTC calendar day' });
+  } catch (error) {
+    console.error('Admin blood-stock dashboard failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not load blood-stock administration data.' });
+  }
+});
+
+app.patch('/api/admin/blood-stock/:stockId/verification', requireDatabase,
+  requireAdminConfigured, requireAdmin, rateLimit(60, 60 * 1000), async (req, res) => {
+    const stockId = Number(req.params.stockId);
+    const verificationStatus = req.body?.verification_status;
+    if (!Number.isSafeInteger(stockId) || stockId < 1 ||
+        !['verified', 'rejected'].includes(verificationStatus)) {
+      return res.status(400).json({ message: 'Choose a valid stock record and verification decision.' });
+    }
+    try {
+      const [result] = await db.execute(
+        `UPDATE blood_stock
+         SET verification_status = ?, reviewed_by_admin_id = ?, reviewed_at = UTC_TIMESTAMP(),
+             last_updated = last_updated
+         WHERE stock_id = ?`,
+        [verificationStatus, req.admin.admin_id, stockId]
+      );
+      if (!result.affectedRows) {
+        return res.status(404).json({ message: 'Stock report was not found.' });
+      }
+      syncBloodStockAlerts().catch(error => {
+        console.error('Stock alert refresh after verification failed:', error.code || error.message);
+      });
+      res.json({ message: `Stock report ${verificationStatus}.`, verification_status: verificationStatus });
+    } catch (error) {
+      console.error('Blood-stock verification failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not update stock verification.' });
+    }
+  });
+
+app.get('/api/admin/blood-bank-staff', requireDatabase, requireAdminConfigured, requireAdmin, async (req, res) => {
+  try {
+    const [staff] = await db.execute(
+      `SELECT u.user_id, u.username, u.full_name, u.email, bs.bank_id,
+              b.bank_name
+       FROM users u
+       LEFT JOIN blood_bank_staff bs ON bs.user_id = u.user_id
+       LEFT JOIN blood_banks b ON b.blood_bank_id = bs.bank_id
+       WHERE u.role = 'blood_bank'
+       ORDER BY u.full_name, u.user_id`
+    );
+    res.set('Cache-Control', 'no-store');
+    res.json({ staff });
+  } catch (error) {
+    console.error('Blood-bank staff list failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not load blood-bank staff accounts.' });
+  }
+});
+
+app.post('/api/admin/blood-bank-staff', requireDatabase, requireAdminConfigured,
+  requireAdmin, rateLimit(30, 60 * 60 * 1000), async (req, res) => {
+    const userId = Number(req.body?.user_id);
+    const bankId = Number(req.body?.bank_id);
+    if (!Number.isSafeInteger(userId) || userId < 1 || !Number.isSafeInteger(bankId) || bankId < 1) {
+      return res.status(400).json({ message: 'Choose an existing blood-bank staff account and bank.' });
+    }
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[staff]] = await connection.execute(
+        `SELECT user_id FROM users WHERE user_id = ? AND role = 'blood_bank' FOR UPDATE`,
+        [userId]
+      );
+      const [[bank]] = await connection.execute(
+        `SELECT blood_bank_id FROM blood_banks WHERE blood_bank_id = ? AND is_active = 1 FOR UPDATE`,
+        [bankId]
+      );
+      if (!staff || !bank) {
+        await connection.rollback();
+        return res.status(404).json({ message: 'Active bank or authorized blood-bank user was not found.' });
+      }
+      await connection.execute(
+        `INSERT INTO blood_bank_staff (user_id, bank_id) VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE bank_id = VALUES(bank_id)`,
+        [userId, bankId]
+      );
+      await connection.commit();
+      res.json({ message: 'Staff account mapped to the selected bank.' });
+    } catch (error) {
+      await connection.rollback().catch(() => {});
+      console.error('Blood-bank staff mapping failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not map this staff account.' });
+    } finally {
+      connection.release();
+    }
+  }
+);
+
+app.get('/api/admin/blood-stock/history', requireDatabase, requireAdminConfigured, requireAdmin, async (req, res) => {
+  const bankId = req.query.bank_id === undefined ? null : Number(req.query.bank_id);
+  if (bankId !== null && (!Number.isSafeInteger(bankId) || bankId < 1)) {
+    return res.status(400).json({ message: 'Choose a valid bank.' });
+  }
+  try {
+    const [history] = await db.execute(
+      `SELECT h.history_id, h.stock_id, h.blood_bank_id, b.bank_name, h.blood_group,
+              h.component, h.previous_physical_units, h.physical_units,
+              h.previous_reserved_units, h.reserved_units,
+              h.previous_issued_units, h.issued_units,
+              h.previous_discarded_units, h.discarded_units,
+              h.previous_available_units, h.available_units,
+              h.transaction_type, h.quantity_changed, h.remarks, u.full_name AS staff_name,
+              DATE_FORMAT(h.created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at
+       FROM stock_history h JOIN blood_banks b ON b.blood_bank_id = h.blood_bank_id
+       JOIN users u ON u.user_id = h.staff_user_id
+       WHERE (? IS NULL OR h.blood_bank_id = ?)
+       ORDER BY h.created_at DESC, h.history_id DESC LIMIT 500`,
+      [bankId, bankId]
+    );
+    res.set('Cache-Control', 'no-store');
+    res.json({ history });
+  } catch (error) {
+    console.error('Admin stock history lookup failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not load stock update history.' });
+  }
+});
+
+app.post('/api/admin/blood-stock/thresholds', requireDatabase, requireAdminConfigured,
+  requireAdmin, rateLimit(60, 60 * 60 * 1000), async (req, res) => {
+    const bankId = Number(req.body?.blood_bank_id);
+    const bloodGroup = normalizeBloodGroup(req.body?.blood_group);
+    const component = req.body?.component;
+    const threshold = req.body?.low_stock_threshold;
+    if (!Number.isSafeInteger(bankId) || bankId < 1 || !BLOOD_GROUPS.has(bloodGroup) ||
+        !['whole_blood', 'red_cells', 'platelets', 'plasma'].includes(component) ||
+        !Number.isSafeInteger(threshold) || threshold < 0 || threshold > 100000) {
+      return res.status(400).json({ message: 'Choose a valid bank, blood group, component, and non-negative threshold.' });
+    }
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[bank]] = await connection.execute(
+        'SELECT blood_bank_id FROM blood_banks WHERE blood_bank_id = ? LIMIT 1 FOR UPDATE',
+        [bankId]
+      );
+      if (!bank) {
+        await connection.rollback();
+        return res.status(404).json({ message: 'Blood bank was not found.' });
+      }
+      const [[old]] = await connection.execute(
+        `SELECT low_stock_threshold FROM blood_stock_thresholds
+         WHERE blood_bank_id = ? AND blood_group = ? AND component = ? FOR UPDATE`,
+        [bankId, bloodGroup, component]
+      );
+      await connection.execute(
+        `INSERT INTO blood_stock_thresholds
+           (blood_bank_id, blood_group, component, low_stock_threshold, updated_by_admin_id)
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE low_stock_threshold = VALUES(low_stock_threshold),
+           updated_by_admin_id = VALUES(updated_by_admin_id), updated_at = UTC_TIMESTAMP()`,
+        [bankId, bloodGroup, component, threshold, req.admin.admin_id]
+      );
+      if (!old || Number(old.low_stock_threshold) !== threshold) {
+        await connection.execute(
+          `INSERT INTO blood_stock_threshold_history
+             (blood_bank_id, blood_group, component, previous_threshold,
+              new_threshold, updated_by_admin_id)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [bankId, bloodGroup, component, old ? Number(old.low_stock_threshold) : null,
+            threshold, req.admin.admin_id]
+        );
+      }
+      await connection.execute(
+        `UPDATE blood_stock SET low_stock_threshold = ?
+         WHERE blood_bank_id = ? AND blood_group = ? AND component = ?`,
+        [threshold, bankId, bloodGroup, component]
+      );
+      await connection.commit();
+      syncBloodStockAlerts().catch(error => {
+        console.error('Stock alert refresh after threshold update failed:', error.code || error.message);
+      });
+      res.json({ message: 'Low-stock threshold saved and audited.' });
+    } catch (error) {
+      await connection.rollback().catch(() => {});
+      console.error('Blood-stock threshold update failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not save the low-stock threshold.' });
+    } finally {
+      connection.release();
+    }
+  }
+);
+
+app.patch('/api/admin/blood-banks/:bankId/verification', requireDatabase,
+  requireAdminConfigured, requireAdmin, async (req, res) => {
+    const bankId = Number(req.params.bankId);
+    const verificationStatus = req.body?.verification_status;
+    if (!Number.isSafeInteger(bankId) || bankId < 1 ||
+        !['pending', 'verified', 'rejected'].includes(verificationStatus)) {
+      return res.status(400).json({ message: 'Choose a valid bank and verification state.' });
+    }
+    try {
+      const [result] = await db.execute(
+        `UPDATE blood_banks SET verification_status = ?, verified = ?, is_active = ?
+         WHERE blood_bank_id = ?`,
+        [verificationStatus, verificationStatus === 'verified' ? 1 : 0,
+          verificationStatus === 'rejected' ? 0 : 1, bankId]
+      );
+      if (!result.affectedRows) return res.status(404).json({ message: 'Blood bank was not found.' });
+      res.json({ message: `Blood bank status updated to ${verificationStatus}.` });
+    } catch (error) {
+      console.error('Blood-bank verification update failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not update blood-bank verification.' });
+    }
+  }
+);
+
 app.get('/api/me', requireDatabase, async (req, res) => {
   const userId = getSessionUserId(req);
   if (!userId) return res.json({ user: null });
   try {
     const [users] = await db.execute(
-      'SELECT user_id, username, full_name, email, role, city, state, place FROM users WHERE user_id = ? LIMIT 1',
+      'SELECT user_id, username, full_name, email, role, phone, city, state, place FROM users WHERE user_id = ? LIMIT 1',
       [userId]
     );
     if (!users.length) {
@@ -2197,18 +3837,22 @@ app.get('/api/availability/status', requireDatabase, requireSession, async (req,
       `SELECT availability_status, availability_mode, available, public_contact_consent,
               public_identity_consent,
               emergency_response_consent,
+              DATE_FORMAT(COALESCE(next_eligible_date,
+                DATE_ADD(last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)),
+                '%Y-%m-%d') AS next_eligible_date,
+              (${DONOR_ELIGIBILITY_SQL}) AS eligible_for_matching,
               availability_expires_at > UTC_TIMESTAMP() AS confirmation_current,
               COALESCE(DATE_FORMAT(availability_expires_at, '%Y-%m-%dT%H:%i:%sZ'),
                        DATE_FORMAT(available_until, '%Y-%m-%dT%H:%i:%sZ')) AS available_until,
               EXISTS (
                 SELECT 1 FROM donor_availability_dates expired_date
-                WHERE expired_date.donor_user_id = donors.user_id
+                WHERE expired_date.donor_user_id = d.user_id
                   AND expired_date.status = 'available'
                   AND expired_date.available_date < UTC_DATE()
               ) AS has_expired_selected_dates,
               DATE_FORMAT(last_confirmed_at, '%Y-%m-%dT%H:%i:%sZ') AS last_confirmed_at
-       FROM donors
-       WHERE user_id = ?
+      FROM donors d
+      WHERE d.user_id = ?
        LIMIT 1`,
       [req.user.user_id]
     );
@@ -2232,6 +3876,9 @@ app.get('/api/availability/status', requireDatabase, requireSession, async (req,
     const status = active
       ? 'Available'
       : donors[0].last_confirmed_at &&
+        donors[0].availability_status === 'temporarily_unavailable'
+        ? 'Temporarily Unavailable'
+      : donors[0].last_confirmed_at &&
         donors[0].available === 0 &&
         donors[0].availability_status === 'not_available'
         ? 'Not Available'
@@ -2246,6 +3893,8 @@ app.get('/api/availability/status', requireDatabase, requireSession, async (req,
       availability_status: donors[0].availability_status,
       availability_mode: donors[0].availability_mode || 'general',
       is_available: Boolean(active),
+      eligible_for_matching: Boolean(donors[0].eligible_for_matching),
+      next_eligible_date: donors[0].next_eligible_date,
       available_until: donors[0].available_until,
       last_confirmed_at: donors[0].last_confirmed_at,
       selected_dates: dates,
@@ -2269,14 +3918,7 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
     expires_in_hours: expiresInHours = AVAILABILITY_HOURS,
     mode: submittedMode = 'general',
     selected_dates: submittedDates } = req.body || {};
-  const normalizedStatus = typeof submittedStatus === 'string'
-    ? submittedStatus.trim().toLowerCase().replace(/[\s-]+/g, '_')
-    : '';
-  const status = normalizedStatus === 'available'
-    ? 'available'
-    : ['unavailable', 'not_available'].includes(normalizedStatus)
-      ? 'not_available'
-      : '';
+  const status = normalizeAvailabilityState(submittedStatus);
   const mode = ['general', 'selected_dates', 'unavailable'].includes(submittedMode)
     ? submittedMode
     : '';
@@ -2291,7 +3933,7 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
       selectedDates.length > 100 ||
       (mode === 'selected_dates' && selectedDates.length === 0) ||
       (mode !== 'selected_dates' && selectedDates.length > 0) ||
-      (mode === 'unavailable' && status !== 'not_available') ||
+      (mode === 'unavailable' && !['not_available', 'temporarily_unavailable'].includes(status)) ||
       (mode !== 'unavailable' && status !== 'available')) {
     return res.status(400).json({ message: 'Choose a valid status, a 4-, 12-, or 24-hour duration, and confirm your privacy choices.' });
   }
@@ -2425,7 +4067,9 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
       [req.user.user_id]
     );
     res.json({
-      status: mode === 'unavailable' ? 'Not Available' : 'Available',
+      status: status === 'temporarily_unavailable'
+        ? 'Temporarily Unavailable'
+        : mode === 'unavailable' ? 'Not Available' : 'Available',
       availability_status: updatedDonor.availability_status,
       availability_mode: updatedDonor.availability_mode,
       is_available: updatedDonor.available === 1,
@@ -2446,12 +4090,13 @@ app.get('/api/availability/count', requireDatabase, requireSession, async (req, 
   try {
     const [rows] = await db.execute(
       `SELECT COUNT(*) AS available_count
-       FROM donors
-       WHERE available = 1
-         AND public_contact_consent = 1
-         AND last_confirmed_at IS NOT NULL
-         AND COALESCE(availability_mode, 'general') = 'general'
-         AND availability_expires_at > UTC_TIMESTAMP()`
+       FROM donors d
+       WHERE d.available = 1
+         AND d.public_contact_consent = 1
+         AND ${DONOR_ELIGIBILITY_SQL}
+         AND d.last_confirmed_at IS NOT NULL
+         AND COALESCE(d.availability_mode, 'general') = 'general'
+         AND d.availability_expires_at > UTC_TIMESTAMP()`
     );
     res.json({ available_count: Number(rows[0].available_count), checked_at: new Date().toISOString() });
   } catch (error) {
@@ -2459,6 +4104,315 @@ app.get('/api/availability/count', requireDatabase, requireSession, async (req, 
     res.status(500).json({ message: 'Could not check current donor availability.' });
   }
 });
+
+app.get('/api/donor/donation-history', requireDatabase, requireSession, async (req, res) => {
+  if (req.user.role !== 'donor') {
+    return res.status(403).json({ message: 'Only donor accounts can view donation history.' });
+  }
+  try {
+    const [[summary], [donations]] = await Promise.all([
+      db.execute(
+        `SELECT DATE_FORMAT(d.last_donation_date, '%Y-%m-%d') AS last_donation_date,
+                DATE_FORMAT(COALESCE(d.next_eligible_date,
+                  DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)),
+                  '%Y-%m-%d') AS next_eligible_date
+         FROM donors d WHERE d.user_id = ? LIMIT 1`,
+        [req.user.user_id]
+      ),
+      db.execute(
+        `SELECT DATE_FORMAT(donation_date, '%Y-%m-%d') AS donation_date,
+                DATE_FORMAT(next_eligible_date, '%Y-%m-%d') AS next_eligible_date,
+                verification_status
+         FROM donor_donation_history
+         WHERE donor_user_id = ?
+         ORDER BY donation_date DESC, donation_id DESC
+         LIMIT 100`,
+        [req.user.user_id]
+      )
+    ]);
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      summary: summary[0] || { last_donation_date: null, next_eligible_date: null },
+      donations,
+      eligibility_interval_months: DONATION_ELIGIBILITY_MONTHS,
+      eligibility_requires_medical_review: true
+    });
+  } catch (error) {
+    console.error('Donor donation history lookup failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not load your donation history.' });
+  }
+});
+
+app.get('/api/donor/eligibility-portal', requireDatabase, requireSession, async (req, res) => {
+  if (req.user.role !== 'donor') {
+    return res.status(403).json({ message: 'Only donor accounts can view the eligibility portal.' });
+  }
+  try {
+    const [[donor], [donations]] = await Promise.all([
+      db.execute(
+        `SELECT DATE_FORMAT(d.last_donation_date, '%Y-%m-%d') AS last_donation_date,
+                DATE_FORMAT(COALESCE(d.next_eligible_date,
+                  DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)),
+                  '%Y-%m-%d') AS next_review_date,
+                d.available,
+                d.availability_mode,
+                d.public_contact_consent,
+                d.public_identity_consent,
+                d.last_confirmed_at,
+                d.availability_expires_at,
+                (SELECT MAX(dh.verified_at) FROM donor_donation_history dh
+                 WHERE dh.donor_user_id = d.user_id
+                   AND dh.verification_status = 'verified') AS last_donation_verified_at,
+                (SELECT er.decision FROM donor_eligibility_reviews er
+                 WHERE er.donor_user_id = d.user_id
+                 ORDER BY er.reviewed_at DESC, er.review_id DESC LIMIT 1) AS latest_decision,
+                (SELECT DATE_FORMAT(er.reviewed_at, '%Y-%m-%dT%H:%i:%sZ')
+                 FROM donor_eligibility_reviews er
+                 WHERE er.donor_user_id = d.user_id
+                 ORDER BY er.reviewed_at DESC, er.review_id DESC LIMIT 1) AS latest_reviewed_at,
+                (SELECT er.notes FROM donor_eligibility_reviews er
+                 WHERE er.donor_user_id = d.user_id
+                 ORDER BY er.reviewed_at DESC, er.review_id DESC LIMIT 1) AS latest_review_instructions,
+                (SELECT reviewer.full_name FROM donor_eligibility_reviews er
+                 JOIN users reviewer ON reviewer.user_id = er.reviewed_by_user_id
+                 WHERE er.donor_user_id = d.user_id
+                 ORDER BY er.reviewed_at DESC, er.review_id DESC LIMIT 1) AS latest_reviewed_by,
+                (SELECT hs.review_status = 'Cleared' AND hs.health_data_consent_at IS NOT NULL
+                 FROM donor_health_screenings hs
+                 WHERE hs.donor_user_id = d.user_id
+                 ORDER BY hs.submitted_at DESC, hs.screening_id DESC LIMIT 1) AS latest_screening_cleared,
+                (SELECT hs.review_status FROM donor_health_screenings hs
+                 WHERE hs.donor_user_id = d.user_id
+                 ORDER BY hs.submitted_at DESC, hs.screening_id DESC LIMIT 1) AS latest_screening_status,
+                (SELECT DATE_FORMAT(hs.submitted_at, '%Y-%m-%dT%H:%i:%sZ')
+                 FROM donor_health_screenings hs
+                 WHERE hs.donor_user_id = d.user_id
+                 ORDER BY hs.submitted_at DESC, hs.screening_id DESC LIMIT 1) AS latest_screening_submitted_at,
+                (SELECT hs.submitted_at >= COALESCE(
+                   (SELECT MAX(dh.verified_at) FROM donor_donation_history dh
+                    WHERE dh.donor_user_id = d.user_id
+                      AND dh.verification_status = 'verified'),
+                   d.last_donation_date, '1000-01-01 00:00:00')
+                 FROM donor_health_screenings hs
+                 WHERE hs.donor_user_id = d.user_id
+                 ORDER BY hs.submitted_at DESC, hs.screening_id DESC LIMIT 1) AS screening_after_donation,
+                (SELECT request_status FROM donor_eligibility_review_requests erq
+                 WHERE erq.donor_user_id = d.user_id
+                 ORDER BY erq.requested_at DESC, erq.request_id DESC LIMIT 1) AS request_status,
+                (SELECT DATE_FORMAT(requested_at, '%Y-%m-%dT%H:%i:%sZ')
+                 FROM donor_eligibility_review_requests erq
+                 WHERE erq.donor_user_id = d.user_id
+                 ORDER BY erq.requested_at DESC, erq.request_id DESC LIMIT 1) AS request_date,
+                (SELECT DATE_FORMAT(reviewed_at, '%Y-%m-%dT%H:%i:%sZ')
+                 FROM donor_eligibility_review_requests erq
+                 WHERE erq.donor_user_id = d.user_id
+                 ORDER BY erq.requested_at DESC, erq.request_id DESC LIMIT 1) AS request_reviewed_at,
+                (SELECT instructions FROM donor_eligibility_review_requests erq
+                 WHERE erq.donor_user_id = d.user_id
+                 ORDER BY erq.requested_at DESC, erq.request_id DESC LIMIT 1) AS request_instructions,
+                (SELECT a.username FROM donor_eligibility_review_requests erq
+                 JOIN admin_users a ON a.admin_id = erq.reviewed_by_admin_id
+                 WHERE erq.donor_user_id = d.user_id
+                 ORDER BY erq.requested_at DESC, erq.request_id DESC LIMIT 1) AS request_reviewed_by
+         FROM donors d
+         WHERE d.user_id = ? LIMIT 1`,
+        [req.user.user_id]
+      ),
+      db.execute(
+        `SELECT donation_id,
+                DATE_FORMAT(donation_date, '%Y-%m-%d') AS donation_date,
+                DATE_FORMAT(next_eligible_date, '%Y-%m-%d') AS next_review_date,
+                verification_status,
+                DATE_FORMAT(verified_at, '%Y-%m-%dT%H:%i:%sZ') AS verified_at
+         FROM donor_donation_history
+         WHERE donor_user_id = ?
+         ORDER BY donation_date DESC, donation_id DESC
+         LIMIT 100`,
+        [req.user.user_id]
+      )
+    ]);
+    if (!donor) return res.status(404).json({ message: 'No donor profile is linked to this account.' });
+    const today = new Date().toISOString().slice(0, 10);
+    const decisionAfterDonation = donor.latest_reviewed_at &&
+      (!donor.last_donation_verified_at ||
+        new Date(donor.latest_reviewed_at).getTime() >= new Date(donor.last_donation_verified_at).getTime());
+    const screeningCleared = Boolean(donor.latest_screening_cleared) &&
+      Boolean(donor.screening_after_donation);
+    const reviewAfterScreening = donor.latest_reviewed_at && donor.latest_screening_submitted_at &&
+      new Date(donor.latest_reviewed_at).getTime() >= new Date(donor.latest_screening_submitted_at).getTime();
+    const eligibleDecisionCurrent = donor.latest_decision === 'eligible' &&
+      Boolean(decisionAfterDonation && reviewAfterScreening && screeningCleared);
+    const status = getEligibilityPortalStatus({
+      lastDonationDate: donor.last_donation_date,
+      nextReviewDate: donor.next_review_date,
+      today,
+      latestDecision: donor.latest_decision,
+      decisionAfterDonation: Boolean(
+        donor.latest_decision === 'deferred'
+          ? decisionAfterDonation
+          : eligibleDecisionCurrent
+      ),
+      screeningCleared,
+      requestStatus: donor.request_status
+    });
+    const progress = getRecoveryProgress(donor.last_donation_date, donor.next_review_date, today);
+    const eligibilityConfirmed = status === 'eligibility_confirmed';
+    const availabilityConfirmedAt = donor.last_confirmed_at
+      ? new Date(donor.last_confirmed_at).getTime()
+      : Number.NaN;
+    const availabilityExpiresAt = donor.availability_expires_at
+      ? new Date(donor.availability_expires_at).getTime()
+      : Number.NaN;
+    const matchingEligibilityConfirmed = isMatchingEligibilityConfirmed({
+      decision: donor.latest_decision,
+      reviewedAt: donor.latest_reviewed_at,
+      lastDonationVerifiedAt: donor.last_donation_verified_at,
+      lastConfirmedAt: donor.last_confirmed_at
+    });
+    const canAppearInMatching = eligibilityConfirmed &&
+      matchingEligibilityConfirmed &&
+      Number(donor.available) === 1 &&
+      donor.availability_mode === 'general' &&
+      Boolean(donor.public_contact_consent) &&
+      Boolean(donor.public_identity_consent) &&
+      Number.isFinite(availabilityConfirmedAt) &&
+      Number.isFinite(availabilityExpiresAt) &&
+      availabilityExpiresAt > Date.now();
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      summary: {
+        last_donation_date: donor.last_donation_date,
+        next_review_date: donor.next_review_date,
+        days_since_last_donation: progress.daysSinceDonation,
+        recovery_period_days: progress.totalRecoveryDays,
+        recovery_progress_percent: progress.progressPercent,
+        status,
+        can_appear_in_live_matching: canAppearInMatching,
+        can_request_review: canRequestEligibilityReview({
+          today,
+          nextReviewDate: donor.next_review_date,
+          screeningCleared,
+          requestStatus: donor.request_status,
+          eligibilityConfirmed
+        }),
+        eligibility_interval_months: DONATION_ELIGIBILITY_MONTHS,
+        latest_screening_status: donor.latest_screening_status || 'Not submitted'
+      },
+      review: {
+        request_date: donor.request_date,
+        request_status: donor.request_status || 'not_requested',
+        request_reviewed_at: donor.request_reviewed_at,
+        request_instructions: donor.request_instructions,
+        staff_decision: donor.latest_decision,
+        staff_reviewed_at: donor.latest_reviewed_at,
+        staff_reviewed_by: donor.latest_reviewed_by,
+        staff_instructions: donor.latest_review_instructions
+      },
+      donations,
+      checked_at: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Donor eligibility portal lookup failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not load your donor eligibility information.' });
+  }
+});
+
+app.post('/api/donor/eligibility-review-requests', requireDatabase, requireSession,
+  rateLimit(5, 60 * 60 * 1000), async (req, res) => {
+    if (req.user.role !== 'donor') {
+      return res.status(403).json({ message: 'Only donor accounts can request an eligibility review.' });
+    }
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[donor]] = await connection.execute(
+        `SELECT d.user_id,
+                DATE_FORMAT(COALESCE(d.next_eligible_date,
+                  DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)),
+                  '%Y-%m-%d') AS next_review_date,
+                COALESCE(d.next_eligible_date,
+                  DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)) <= UTC_DATE()
+                  AS recovery_complete,
+                        d.last_confirmed_at,
+                        (SELECT hs.review_status = 'Cleared' AND hs.health_data_consent_at IS NOT NULL
+                         FROM donor_health_screenings hs
+                         WHERE hs.donor_user_id = d.user_id
+                         ORDER BY hs.submitted_at DESC, hs.screening_id DESC LIMIT 1) AS screening_cleared,
+                (SELECT hs.submitted_at FROM donor_health_screenings hs
+                 WHERE hs.donor_user_id = d.user_id
+                 ORDER BY hs.submitted_at DESC, hs.screening_id DESC LIMIT 1) AS screening_submitted_at,
+                (SELECT hs.submitted_at >= COALESCE(
+                   (SELECT MAX(dh.verified_at) FROM donor_donation_history dh
+                    WHERE dh.donor_user_id = d.user_id
+                      AND dh.verification_status = 'verified'),
+                   d.last_donation_date, '1000-01-01 00:00:00')
+                 FROM donor_health_screenings hs
+                 WHERE hs.donor_user_id = d.user_id
+                 ORDER BY hs.submitted_at DESC, hs.screening_id DESC LIMIT 1) AS screening_after_donation,
+                (SELECT er.decision FROM donor_eligibility_reviews er
+                 WHERE er.donor_user_id = d.user_id
+                 ORDER BY er.reviewed_at DESC, er.review_id DESC LIMIT 1) AS latest_decision,
+                (SELECT er.reviewed_at FROM donor_eligibility_reviews er
+                 WHERE er.donor_user_id = d.user_id
+                 ORDER BY er.reviewed_at DESC, er.review_id DESC LIMIT 1) AS latest_reviewed_at,
+                (SELECT MAX(dh.verified_at) FROM donor_donation_history dh
+                 WHERE dh.donor_user_id = d.user_id AND dh.verification_status = 'verified')
+                   AS last_donation_verified_at
+         FROM donors d WHERE d.user_id = ? FOR UPDATE`,
+        [req.user.user_id]
+      );
+      if (!donor) {
+        await connection.rollback();
+        return res.status(404).json({ message: 'No donor profile is linked to this account.' });
+      }
+      const [[activeRequest]] = await connection.execute(
+        `SELECT request_id, request_status FROM donor_eligibility_review_requests
+         WHERE donor_user_id = ? AND request_status IN ('pending', 'approved')
+         LIMIT 1 FOR UPDATE`,
+        [req.user.user_id]
+      );
+      const screeningCleared = Boolean(donor.screening_cleared) &&
+        Boolean(donor.screening_after_donation);
+      const decisionAfterDonation = donor.latest_reviewed_at &&
+        (!donor.last_donation_verified_at ||
+          new Date(donor.latest_reviewed_at).getTime() >= new Date(donor.last_donation_verified_at).getTime());
+      const reviewAfterScreening = donor.latest_reviewed_at && donor.screening_submitted_at &&
+        new Date(donor.latest_reviewed_at).getTime() >= new Date(donor.screening_submitted_at).getTime();
+      const eligibilityConfirmed = donor.latest_decision === 'eligible' &&
+        Boolean(decisionAfterDonation && reviewAfterScreening && screeningCleared);
+      if (!canRequestEligibilityReview({
+        today: new Date().toISOString().slice(0, 10),
+        nextReviewDate: donor.next_review_date,
+        screeningCleared,
+        requestStatus: activeRequest?.request_status || null,
+        eligibilityConfirmed
+      })) {
+        await connection.rollback();
+        return res.status(409).json({
+          message: donor.recovery_complete
+            ? 'A current cleared screening is required and an eligibility review must still be needed.'
+            : 'The configured recovery period must pass before requesting eligibility review.'
+        });
+      }
+      const [result] = await connection.execute(
+        `INSERT INTO donor_eligibility_review_requests (donor_user_id, request_status, requested_at)
+         VALUES (?, 'pending', UTC_TIMESTAMP())`,
+        [req.user.user_id]
+      );
+      await connection.commit();
+      res.status(201).json({
+        request_id: Number(result.insertId),
+        request_status: 'pending',
+        message: 'Your review request was submitted. Qualified staff must make the eligibility decision.'
+      });
+    } catch (error) {
+      await connection.rollback().catch(() => {});
+      console.error('Eligibility review request failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not submit your eligibility review request.' });
+    } finally {
+      connection.release();
+    }
+  });
 
 app.get('/api/donor/health-screening', requireDatabase, requireSession, async (req, res) => {
   if (req.user.role !== 'donor') {
@@ -2469,6 +4423,7 @@ app.get('/api/donor/health-screening', requireDatabase, requireSession, async (r
       `SELECT screening_id, responses, review_status,
               DATE_FORMAT(submitted_at, '%Y-%m-%dT%H:%i:%sZ') AS submitted_at,
               DATE_FORMAT(reviewed_at, '%Y-%m-%dT%H:%i:%sZ') AS reviewed_at,
+              DATE_FORMAT(health_data_consent_at, '%Y-%m-%dT%H:%i:%sZ') AS health_data_consent_at,
               review_notes
        FROM donor_health_screenings
        WHERE donor_user_id = ?
@@ -2476,10 +4431,17 @@ app.get('/api/donor/health-screening', requireDatabase, requireSession, async (r
        LIMIT 1`,
       [req.user.user_id]
     );
-    res.json({ screening: screenings[0] || null });
+    res.set('Cache-Control', 'no-store');
+    const screening = screenings[0] || null;
+    if (screening) screening.responses = decryptHealthResponses(screening.responses);
+    res.json({ screening });
   } catch (error) {
     console.error('Donor health screening lookup failed:', error.code || error.message);
-    res.status(500).json({ message: 'Could not load your health screening.' });
+    res.status(error.message.includes('HEALTH_DATA_ENCRYPTION_KEY') ? 503 : 500).json({
+      message: error.message.includes('HEALTH_DATA_ENCRYPTION_KEY')
+        ? error.message
+        : 'Could not load your health screening.'
+    });
   }
 });
 
@@ -2492,28 +4454,66 @@ app.post('/api/donor/health-screening', requireDatabase, requireSession, rateLim
   const lastDonationDate = typeof answers?.last_donation_date === 'string'
     ? answers.last_donation_date
     : '';
+  const weight = typeof answers?.weight_kg === 'string' ? answers.weight_kg.trim() : '';
+  const systolic = typeof answers?.blood_pressure_systolic === 'string'
+    ? answers.blood_pressure_systolic.trim()
+    : '';
+  const diastolic = typeof answers?.blood_pressure_diastolic === 'string'
+    ? answers.blood_pressure_diastolic.trim()
+    : '';
+  const medicationName = typeof answers?.medication_name === 'string'
+    ? answers.medication_name.trim()
+    : '';
+  const healthConditions = typeof answers?.health_conditions === 'string'
+    ? answers.health_conditions.trim()
+    : '';
+  const temporaryIllness = typeof answers?.temporary_illness === 'string'
+    ? answers.temporary_illness.trim()
+    : '';
+  const additionalInfo = typeof answers?.additional_info === 'string'
+    ? answers.additional_info.trim()
+    : '';
   if (!answers || typeof answers !== 'object' || Array.isArray(answers) ||
       !validAnswer(answers.feeling_well) ||
       !validAnswer(answers.recent_illness) ||
       !validAnswer(answers.taking_medication) ||
+      !validAnswer(answers.receiving_treatment) ||
       !validAnswer(answers.previously_deferred) ||
+      !/^\d{1,4}(?:\.\d{1,2})?$/.test(weight) || Number(weight) <= 0 ||
+      !/^\d{1,3}$/.test(systolic) || Number(systolic) < 1 ||
+      !/^\d{1,3}$/.test(diastolic) || Number(diastolic) < 1 ||
+      medicationName.length > 150 || healthConditions.length > 1000 ||
+      temporaryIllness.length > 1000 || additionalInfo.length > 1000 ||
+      answers.health_data_consent !== true ||
       (lastDonationDate && (!isValidDateOnly(lastDonationDate) ||
         lastDonationDate > new Date().toISOString().slice(0, 10)))) {
-    return res.status(400).json({ message: 'Complete the screening using Yes, No, or Not sure and enter a valid past donation date.' });
+    return res.status(400).json({ message: 'Complete all screening fields, enter valid measurements and a past donation date, and consent to health-data use.' });
+  }
+  if (!healthDataEncryptionKey) {
+    return res.status(503).json({ message: 'Health screening is unavailable until HEALTH_DATA_ENCRYPTION_KEY is configured on the server.' });
   }
   const responses = {
     feeling_well: answers.feeling_well,
     recent_illness: answers.recent_illness,
     taking_medication: answers.taking_medication,
+    medication_name: medicationName || null,
+    receiving_treatment: answers.receiving_treatment,
+    weight_kg: Number(weight),
+    blood_pressure_systolic_mmhg: Number(systolic),
+    blood_pressure_diastolic_mmhg: Number(diastolic),
+    health_conditions: healthConditions || null,
+    temporary_illness: temporaryIllness || null,
+    additional_info: additionalInfo || null,
     previously_deferred: answers.previously_deferred,
     last_donation_date: lastDonationDate || null
   };
   try {
     const [result] = await db.execute(
       `INSERT INTO donor_health_screenings
-         (donor_user_id, responses, review_status, submitted_at)
-       VALUES (?, ?, 'Pending Review', UTC_TIMESTAMP())`,
-      [req.user.user_id, JSON.stringify(responses)]
+        (donor_user_id, responses, review_status, submitted_at,
+         health_data_consent_at, form_version)
+       VALUES (?, ?, 'Pending Review', UTC_TIMESTAMP(), UTC_TIMESTAMP(), '2')`,
+      [req.user.user_id, encryptHealthResponses(responses)]
     );
     res.status(201).json({
       screening: {
@@ -2524,7 +4524,7 @@ app.post('/api/donor/health-screening', requireDatabase, requireSession, rateLim
         reviewed_at: null,
         review_notes: null
       },
-      message: 'Your screening was submitted for authorized review. It does not determine medical eligibility.'
+      message: 'Your health information was saved privately for authorized review. Self-reported details do not determine eligibility; qualified medical staff make the final decision.'
     });
   } catch (error) {
     console.error('Donor health screening submission failed:', error.code || error.message);
@@ -2532,10 +4532,7 @@ app.post('/api/donor/health-screening', requireDatabase, requireSession, rateLim
   }
 });
 
-app.get('/api/blood-bank/health-screenings', requireDatabase, requireSession, async (req, res) => {
-  if (req.user.role !== 'blood_bank') {
-    return res.status(403).json({ message: 'Authorized blood-bank staff access is required.' });
-  }
+app.get('/api/blood-bank/health-screenings', requireDatabase, requireSession, requireBloodBankStaff, async (req, res) => {
   try {
     const [screenings] = await db.execute(
       `SELECT hs.screening_id, hs.donor_user_id, u.full_name, u.blood_group,
@@ -2548,17 +4545,22 @@ app.get('/api/blood-bank/health-screenings', requireDatabase, requireSession, as
        ORDER BY hs.submitted_at ASC
        LIMIT 200`
     );
-    res.json({ screenings });
+    res.set('Cache-Control', 'no-store');
+    res.json({ screenings: screenings.map(screening => ({
+      ...screening,
+      responses: decryptHealthResponses(screening.responses)
+    })) });
   } catch (error) {
     console.error('Blood-bank health screening lookup failed:', error.code || error.message);
-    res.status(500).json({ message: 'Could not load pending health screenings.' });
+    res.status(error.message.includes('HEALTH_DATA_ENCRYPTION_KEY') ? 503 : 500).json({
+      message: error.message.includes('HEALTH_DATA_ENCRYPTION_KEY')
+        ? error.message
+        : 'Could not load pending health screenings.'
+    });
   }
 });
 
-app.post('/api/blood-bank/health-screenings/:screeningId/review', requireDatabase, requireSession, async (req, res) => {
-  if (req.user.role !== 'blood_bank') {
-    return res.status(403).json({ message: 'Authorized blood-bank staff access is required.' });
-  }
+app.post('/api/blood-bank/health-screenings/:screeningId/review', requireDatabase, requireSession, requireBloodBankStaff, async (req, res) => {
   const screeningId = Number(req.params.screeningId);
   const reviewStatus = req.body?.review_status;
   const reviewNotes = typeof req.body?.review_notes === 'string' ? req.body.review_notes.trim() : '';
@@ -2583,6 +4585,627 @@ app.post('/api/blood-bank/health-screenings/:screeningId/review', requireDatabas
     res.status(500).json({ message: 'Could not save the screening review.' });
   }
 });
+
+app.get('/api/blood-bank/donors/eligibility', requireDatabase, requireSession, requireBloodBankStaff, async (req, res) => {
+  try {
+    const [donors] = await db.execute(
+      `SELECT d.user_id AS donor_user_id, u.full_name, d.blood_group,
+              DATE_FORMAT(d.last_donation_date, '%Y-%m-%d') AS last_donation_date,
+              DATE_FORMAT(COALESCE(d.next_eligible_date,
+                DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)),
+                '%Y-%m-%d') AS next_eligible_date,
+              (SELECT er.decision FROM donor_eligibility_reviews er
+               WHERE er.donor_user_id = d.user_id
+               ORDER BY er.reviewed_at DESC, er.review_id DESC LIMIT 1) AS latest_decision
+       FROM donors d
+       JOIN users u ON u.user_id = d.user_id AND u.role = 'donor'
+       JOIN donor_health_screenings hs ON hs.screening_id = (
+         SELECT latest_hs.screening_id FROM donor_health_screenings latest_hs
+         WHERE latest_hs.donor_user_id = d.user_id
+         ORDER BY latest_hs.submitted_at DESC, latest_hs.screening_id DESC LIMIT 1
+       )
+       WHERE hs.review_status = 'Cleared'
+         AND hs.health_data_consent_at IS NOT NULL
+         AND hs.submitted_at >= COALESCE(
+           (SELECT MAX(dh.verified_at) FROM donor_donation_history dh
+            WHERE dh.donor_user_id = d.user_id AND dh.verification_status = 'verified'),
+           d.last_donation_date, '1000-01-01 00:00:00'
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM donor_eligibility_reviews current_review
+           WHERE current_review.donor_user_id = d.user_id
+             AND current_review.decision = 'eligible'
+             AND current_review.reviewed_at >= hs.submitted_at
+             AND current_review.reviewed_at >= COALESCE(
+               (SELECT MAX(dh.verified_at) FROM donor_donation_history dh
+                WHERE dh.donor_user_id = d.user_id AND dh.verification_status = 'verified'),
+               d.last_donation_date, '1000-01-01 00:00:00'
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM donor_eligibility_reviews newer_review
+               WHERE newer_review.donor_user_id = d.user_id
+                 AND (newer_review.reviewed_at > current_review.reviewed_at
+                   OR (newer_review.reviewed_at = current_review.reviewed_at
+                     AND newer_review.review_id > current_review.review_id))
+             )
+         )
+       ORDER BY hs.submitted_at ASC
+       LIMIT 200`
+    );
+    res.set('Cache-Control', 'no-store');
+    res.json({ donors });
+  } catch (error) {
+    console.error('Donor eligibility queue lookup failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not load the donor eligibility queue.' });
+  }
+});
+
+app.post('/api/blood-bank/donors/:donorId/eligibility', requireDatabase, requireSession,
+  requireBloodBankStaff, rateLimit(30, 60 * 60 * 1000), async (req, res) => {
+    const donorId = Number(req.params.donorId);
+    const decision = req.body?.decision;
+    const notes = typeof req.body?.notes === 'string' ? req.body.notes.trim() : '';
+    if (!Number.isSafeInteger(donorId) || donorId < 1 ||
+        !['eligible', 'deferred'].includes(decision) || notes.length > 500) {
+      return res.status(400).json({ message: 'Choose an eligible or deferred decision and keep notes under 500 characters.' });
+    }
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[screening]] = await connection.execute(
+        `SELECT screening_id, review_status, submitted_at, health_data_consent_at
+         FROM donor_health_screenings
+         WHERE donor_user_id = ?
+         ORDER BY submitted_at DESC, screening_id DESC LIMIT 1 FOR UPDATE`,
+        [donorId]
+      );
+      if (!screening || screening.review_status !== 'Cleared' || !screening.health_data_consent_at) {
+        await connection.rollback();
+        return res.status(409).json({ message: 'The donor must have a current screening reviewed by staff before an eligibility decision.' });
+      }
+      const [[donor]] = await connection.execute(
+        `SELECT d.user_id,
+                COALESCE(d.next_eligible_date,
+                  DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)) AS next_eligible_date,
+                COALESCE((SELECT MAX(dh.verified_at) FROM donor_donation_history dh
+                          WHERE dh.donor_user_id = d.user_id AND dh.verification_status = 'verified'),
+                         d.last_donation_date) AS latest_donation_recorded
+         FROM donors d JOIN users u ON u.user_id = d.user_id AND u.role = 'donor'
+         WHERE d.user_id = ? FOR UPDATE`,
+        [donorId]
+      );
+      if (!donor) {
+        await connection.rollback();
+        return res.status(404).json({ message: 'Donor profile was not found.' });
+      }
+      if (donor.latest_donation_recorded &&
+          new Date(screening.submitted_at).getTime() < new Date(donor.latest_donation_recorded).getTime()) {
+        await connection.rollback();
+        return res.status(409).json({ message: 'A new health screening submitted after the most recent verified donation is required.' });
+      }
+      if (decision === 'eligible' && donor.next_eligible_date &&
+          new Date(donor.next_eligible_date).toISOString().slice(0, 10) > new Date().toISOString().slice(0, 10)) {
+        await connection.rollback();
+        return res.status(409).json({ message: 'The configured donation interval has not ended; eligibility cannot yet be approved.' });
+      }
+      await connection.execute(
+        `INSERT INTO donor_eligibility_reviews
+           (donor_user_id, decision, reviewed_by_user_id, reviewed_at, notes)
+         VALUES (?, ?, ?, UTC_TIMESTAMP(), ?)`,
+        [donorId, decision, req.user.user_id, notes || null]
+      );
+      await connection.commit();
+      res.json({ message: `Eligibility review recorded as ${decision}. Final decisions remain the responsibility of qualified medical staff.` });
+    } catch (error) {
+      await connection.rollback().catch(() => {});
+      console.error('Donor eligibility review failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not save the donor eligibility review.' });
+    } finally {
+      connection.release();
+    }
+  }
+);
+
+function formatBloodStockRow(row, requiredUnits = 0) {
+  const stale = !isStockFreshForUtcDate(row.last_updated);
+  const verified = row.verification_status === 'verified';
+  const availableUnits = verified && !stale && row.stock_id !== null
+    ? Number(row.available_units)
+    : null;
+  const threshold = Number(row.threshold || 0);
+  return {
+    stock_id: row.stock_id === null ? null : Number(row.stock_id),
+    blood_bank_id: Number(row.blood_bank_id),
+    bank_name: row.bank_name,
+    address: row.address_text,
+    phone: row.phone || null,
+    email: row.email || null,
+    city: row.city,
+    district: row.district,
+    state: row.state,
+    blood_group: row.blood_group,
+    component: row.component,
+    physical_units: verified && !stale && row.stock_id !== null ? Number(row.physical_units) : null,
+    reserved_units: verified && !stale && row.stock_id !== null ? Number(row.reserved_units) : null,
+    issued_units: verified && !stale && row.stock_id !== null ? Number(row.issued_units) : null,
+    discarded_units: verified && !stale && row.stock_id !== null ? Number(row.discarded_units) : null,
+    total_eligible_units: verified && !stale && row.stock_id !== null ? Number(row.total_eligible_units) : null,
+    available_units: availableUnits,
+    threshold,
+    meets_requested_units: availableUnits !== null && availableUnits >= requiredUnits,
+    last_updated: row.last_updated,
+    stock_date: row.last_updated ? new Date(row.last_updated).toISOString().slice(0, 10) : null,
+    verification_status: row.verification_status || 'pending',
+    status: getStockStatus({
+      available: availableUnits ?? 0,
+      threshold,
+      verified: verified && row.stock_id !== null,
+      stale,
+      requiredUnits
+    }),
+    freshness_policy: 'UTC calendar day'
+  };
+}
+
+async function recordBloodStockUpdate(req, res) {
+  const bloodGroup = normalizeBloodGroup(req.body?.blood_group);
+  const component = req.body?.component;
+  const physical = req.body?.physical_units;
+  const reserved = req.body?.reserved_units;
+  const issued = req.body?.issued_units;
+  const discarded = req.body?.discarded_units;
+  const remarks = typeof req.body?.remarks === 'string' ? req.body.remarks.trim() : '';
+  const idempotencyKey = typeof req.body?.idempotency_key === 'string'
+    ? req.body.idempotency_key.toLowerCase()
+    : '';
+  const transactionType = req.body?.transaction_type || 'daily_update';
+  if (!BLOOD_GROUPS.has(bloodGroup) ||
+      !['whole_blood', 'red_cells', 'platelets', 'plasma'].includes(component) ||
+      ![physical, reserved, issued, discarded].every(value => Number.isSafeInteger(value) && value >= 0 && value <= 100000) ||
+      reserved + issued + discarded > physical || remarks.length > 500 ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(idempotencyKey) ||
+      !['daily_update', 'correction'].includes(transactionType)) {
+    return res.status(400).json({ message: 'Enter valid non-negative quantities, ensure reservations/issues/discards do not exceed physical stock, and provide a unique update key.' });
+  }
+  let calculated;
+  try {
+    calculated = calculateStock({ physical, reserved, issued, discarded });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[duplicate]] = await connection.execute(
+      `SELECT history_id, stock_id, blood_bank_id, blood_group, component,
+              physical_units, reserved_units, issued_units, discarded_units, available_units,
+              staff_user_id
+       FROM stock_history WHERE idempotency_key = ? LIMIT 1`,
+      [idempotencyKey]
+    );
+    if (duplicate) {
+      await connection.rollback();
+      if (Number(duplicate.staff_user_id) !== Number(req.user.user_id) ||
+          Number(duplicate.blood_bank_id) !== Number(req.bloodBank.bank_id) ||
+          duplicate.blood_group !== bloodGroup || duplicate.component !== component) {
+        return res.status(409).json({ message: 'This update key was already used for a different stock transaction.' });
+      }
+      return res.json({
+        duplicate: true,
+        message: 'This stock update was already saved; no duplicate transaction was processed.',
+        stock_id: Number(duplicate.stock_id),
+        available_units: Number(duplicate.available_units)
+      });
+    }
+    const [[thresholdRow]] = await connection.execute(
+      `SELECT low_stock_threshold FROM blood_stock_thresholds
+       WHERE blood_bank_id = ? AND blood_group = ? AND component = ? LIMIT 1`,
+      [req.bloodBank.bank_id, bloodGroup, component]
+    );
+    const lowStockThreshold = Number(thresholdRow?.low_stock_threshold || 0);
+    const [[existing]] = await connection.execute(
+      `SELECT stock_id, physical_units, reserved_units, issued_units, discarded_units,
+              available_units
+       FROM blood_stock
+       WHERE blood_bank_id = ? AND blood_group = ? AND component = ?
+       FOR UPDATE`,
+      [req.bloodBank.bank_id, bloodGroup, component]
+    );
+    const previous = existing || {
+      physical_units: 0,
+      reserved_units: 0,
+      issued_units: 0,
+      discarded_units: 0,
+      available_units: 0
+    };
+    if (existing) {
+      await connection.execute(
+        `UPDATE blood_stock
+         SET units_available = ?, physical_units = ?, reserved_units = ?, issued_units = ?,
+             discarded_units = ?, total_eligible_units = ?, available_units = ?,
+             low_stock_threshold = ?, verification_status = 'pending', updated_by = ?,
+             reviewed_by_admin_id = NULL, reviewed_at = NULL,
+             last_updated = UTC_TIMESTAMP()
+         WHERE stock_id = ?`,
+        [calculated.available, physical, reserved, issued, discarded, calculated.eligible,
+          calculated.available, lowStockThreshold, req.user.user_id, existing.stock_id]
+      );
+    } else {
+      await connection.execute(
+        `INSERT INTO blood_stock
+           (blood_bank_id, blood_group, component, units_available, physical_units,
+            reserved_units, issued_units, discarded_units, total_eligible_units,
+            available_units, low_stock_threshold, verification_status, updated_by, last_updated)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, UTC_TIMESTAMP())`,
+        [req.bloodBank.bank_id, bloodGroup, component, calculated.available, physical,
+          reserved, issued, discarded, calculated.eligible, calculated.available,
+          lowStockThreshold, req.user.user_id]
+      );
+    }
+    const [[saved]] = await connection.execute(
+      `SELECT stock_id, DATE_FORMAT(last_updated, '%Y-%m-%dT%H:%i:%sZ') AS last_updated
+       FROM blood_stock WHERE blood_bank_id = ? AND blood_group = ? AND component = ?`,
+      [req.bloodBank.bank_id, bloodGroup, component]
+    );
+    const quantityChanged = calculated.available - Number(previous.available_units || 0);
+    await connection.execute(
+      `INSERT INTO stock_history
+         (stock_id, blood_bank_id, blood_group, component,
+          previous_physical_units, physical_units, previous_reserved_units, reserved_units,
+          previous_issued_units, issued_units, previous_discarded_units, discarded_units,
+          previous_available_units, available_units, transaction_type, quantity_changed,
+          idempotency_key, remarks, staff_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [saved.stock_id, req.bloodBank.bank_id, bloodGroup, component,
+        Number(previous.physical_units || 0), physical, Number(previous.reserved_units || 0), reserved,
+        Number(previous.issued_units || 0), issued, Number(previous.discarded_units || 0), discarded,
+        Number(previous.available_units || 0), calculated.available, transactionType,
+        quantityChanged, idempotencyKey, remarks || null, req.user.user_id]
+    );
+    await connection.execute(
+      `INSERT INTO blood_bank_audit_logs
+         (actor_user_id, bank_id, inventory_id, action, details)
+       VALUES (?, ?, NULL, ?, ?)`,
+      [req.user.user_id, req.bloodBank.bank_id, 'daily_stock_update', JSON.stringify({
+        stock_id: Number(saved.stock_id), blood_group: bloodGroup, component,
+        physical_units: physical, reserved_units: reserved, issued_units: issued,
+        discarded_units: discarded, total_eligible_units: calculated.eligible,
+        available_units: calculated.available, quantity_changed: quantityChanged,
+        transaction_type: transactionType, remarks: remarks || null
+      })]
+    );
+    await connection.commit();
+    syncBloodStockAlerts().catch(error => {
+      console.error('Stock alert refresh after update failed:', error.code || error.message);
+    });
+    res.status(201).json({
+      stock_id: Number(saved.stock_id),
+      physical_units: physical,
+      reserved_units: reserved,
+      issued_units: issued,
+      discarded_units: discarded,
+      total_eligible_units: calculated.eligible,
+      available_units: calculated.available,
+      verification_status: 'pending',
+      last_updated: saved.last_updated,
+      status: getStockStatus({
+        available: calculated.available,
+        threshold: lowStockThreshold,
+        verified: false,
+        stale: false
+      }),
+      message: 'Daily stock is saved in MySQL and history, pending admin verification.'
+    });
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ message: 'This stock update was already processed. Refresh the inventory before submitting another update.' });
+    }
+    console.error('Daily blood-stock update failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not save the daily blood-stock update.' });
+  } finally {
+    connection.release();
+  }
+}
+
+app.get('/api/blood-stock', requireDatabase, rateLimit(60, 60 * 1000), async (req, res) => {
+  const bloodGroup = normalizeBloodGroup(req.query.blood_group || '');
+  const component = typeof req.query.component === 'string' ? req.query.component : '';
+  const state = typeof req.query.state === 'string' ? req.query.state.trim() : '';
+  const district = typeof req.query.district === 'string' ? req.query.district.trim() : '';
+  const city = typeof req.query.city === 'string' ? req.query.city.trim() : '';
+  const requiredUnits = req.query.required_units === undefined ? 0 : Number(req.query.required_units);
+  if (!BLOOD_GROUPS.has(bloodGroup) ||
+      !['whole_blood', 'red_cells', 'platelets', 'plasma'].includes(component) ||
+      (state && !isNonEmptyString(state, 80)) ||
+      (district && !isNonEmptyString(district, 80)) ||
+      (city && !isNonEmptyString(city, 80)) ||
+      !Number.isSafeInteger(requiredUnits) || requiredUnits < 0 || requiredUnits > 100000) {
+    return res.status(400).json({ message: 'Choose a blood group and component, and valid optional location and unit filters.' });
+  }
+  try {
+    const filters = [
+      'b.is_active = 1',
+      "(b.verification_status = 'verified' OR b.verified = 1)"
+    ];
+    const values = [];
+    if (state) { filters.push('LOWER(b.state) = LOWER(?)'); values.push(state); }
+    if (district) { filters.push('LOWER(b.district) = LOWER(?)'); values.push(district); }
+    if (city) { filters.push('LOWER(b.city) = LOWER(?)'); values.push(city); }
+    const [rows] = await db.execute(
+      `SELECT s.stock_id, b.blood_bank_id, b.bank_name, b.address_text, b.phone, b.email,
+              b.city, b.district, b.state, ? AS blood_group, ? AS component,
+              s.physical_units, s.reserved_units, s.issued_units, s.discarded_units,
+              s.total_eligible_units, s.available_units,
+              COALESCE(t.low_stock_threshold, s.low_stock_threshold, 0) AS threshold,
+              s.verification_status,
+              DATE_FORMAT(s.last_updated, '%Y-%m-%dT%H:%i:%sZ') AS last_updated
+       FROM blood_banks b
+       LEFT JOIN blood_stock s ON s.blood_bank_id = b.blood_bank_id
+         AND s.blood_group = ? AND s.component = ?
+       LEFT JOIN blood_stock_thresholds t ON t.blood_bank_id = b.blood_bank_id
+         AND t.blood_group = ? AND t.component = ?
+       WHERE ${filters.join(' AND ')}
+       ORDER BY b.state, b.district, b.city, b.bank_name
+       LIMIT 300`,
+      [bloodGroup, component, bloodGroup, component, bloodGroup, component, ...values]
+    );
+    res.json({
+      inventory: rows.map(row => formatBloodStockRow(row, requiredUnits)),
+      checked_at: new Date().toISOString(),
+      required_units: requiredUnits,
+      source: 'LifeDrop staff-entered daily stock; not an external live feed or reservation'
+    });
+  } catch (error) {
+    console.error('Daily blood-stock search failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not search daily blood-stock reports.' });
+  }
+});
+
+app.get(/^\/api\/blood-stock\/([1-9]\d{0,9})$/, requireDatabase, rateLimit(60, 60 * 1000), async (req, res) => {
+  const stockId = req.params[0];
+  try {
+    const [[row]] = await db.execute(
+      `SELECT s.stock_id, b.blood_bank_id, b.bank_name, b.address_text, b.phone, b.email,
+              b.city, b.district, b.state, s.blood_group, s.component,
+              s.physical_units, s.reserved_units, s.issued_units, s.discarded_units,
+              s.total_eligible_units, s.available_units,
+              COALESCE(t.low_stock_threshold, s.low_stock_threshold, 0) AS threshold,
+              s.verification_status,
+              DATE_FORMAT(s.last_updated, '%Y-%m-%dT%H:%i:%sZ') AS last_updated
+       FROM blood_stock s JOIN blood_banks b ON b.blood_bank_id = s.blood_bank_id
+       LEFT JOIN blood_stock_thresholds t ON t.blood_bank_id = s.blood_bank_id
+         AND t.blood_group = s.blood_group AND t.component = s.component
+       WHERE s.stock_id = ? AND b.is_active = 1
+         AND (b.verification_status = 'verified' OR b.verified = 1)
+       LIMIT 1`,
+      [stockId]
+    );
+    if (!row) return res.status(404).json({ message: 'Stock record was not found.' });
+    res.json({ stock: formatBloodStockRow(row) });
+  } catch (error) {
+    console.error('Blood-stock detail lookup failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not load this blood-stock record.' });
+  }
+});
+
+app.get('/api/blood-stock/alerts', requireDatabase, rateLimit(60, 60 * 1000), async (req, res) => {
+  try {
+    await syncBloodStockAlerts();
+    const [alerts] = await db.execute(
+      `SELECT a.alert_id, a.blood_bank_id, b.bank_name, b.city, b.district, b.state,
+              a.blood_group, a.component, a.alert_type, a.message,
+              DATE_FORMAT(a.first_triggered_at, '%Y-%m-%dT%H:%i:%sZ') AS first_triggered_at,
+              DATE_FORMAT(a.last_triggered_at, '%Y-%m-%dT%H:%i:%sZ') AS last_triggered_at
+       FROM blood_stock_alerts a JOIN blood_banks b ON b.blood_bank_id = a.blood_bank_id
+       WHERE a.is_active = 1 AND b.is_active = 1
+         AND (b.verification_status = 'verified' OR b.verified = 1)
+       ORDER BY a.last_triggered_at DESC, b.bank_name
+       LIMIT 500`
+    );
+    res.json({ alerts, checked_at: new Date().toISOString() });
+  } catch (error) {
+    console.error('Public stock alert lookup failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not load blood-stock status alerts.' });
+  }
+});
+
+app.get('/api/blood-banks', requireDatabase, rateLimit(60, 60 * 1000), async (req, res) => {
+  const state = typeof req.query.state === 'string' ? req.query.state.trim() : '';
+  const district = typeof req.query.district === 'string' ? req.query.district.trim() : '';
+  const city = typeof req.query.city === 'string' ? req.query.city.trim() : '';
+  if ((state && !isNonEmptyString(state, 80)) ||
+      (district && !isNonEmptyString(district, 80)) ||
+      (city && !isNonEmptyString(city, 80))) {
+    return res.status(400).json({ message: 'Enter valid location filters.' });
+  }
+  const filters = ['is_active = 1', "(verification_status = 'verified' OR verified = 1)"];
+  const values = [];
+  for (const [column, value] of [['state', state], ['district', district], ['city', city]]) {
+    if (value) { filters.push(`LOWER(${column}) = LOWER(?)`); values.push(value); }
+  }
+  try {
+    const [banks] = await db.execute(
+      `SELECT blood_bank_id, bank_name, address_text, phone, email, city, district, state,
+              operating_hours, DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS registered_at
+       FROM blood_banks WHERE ${filters.join(' AND ')}
+       ORDER BY state, district, city, bank_name LIMIT 300`,
+      values
+    );
+    res.json({ banks });
+  } catch (error) {
+    console.error('Verified blood-bank directory failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not load the verified blood-bank directory.' });
+  }
+});
+
+app.get('/api/blood-stock/history', requireDatabase, requireSession, requireBloodBankStaff, async (req, res) => {
+  try {
+    const [history] = await db.execute(
+      `SELECT h.history_id, h.stock_id, h.blood_group, h.component,
+              h.previous_physical_units, h.physical_units,
+              h.previous_reserved_units, h.reserved_units,
+              h.previous_issued_units, h.issued_units,
+              h.previous_discarded_units, h.discarded_units,
+              h.previous_available_units, h.available_units,
+              h.transaction_type, h.quantity_changed, h.remarks, u.full_name AS staff_name,
+              DATE_FORMAT(h.created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at
+       FROM stock_history h JOIN users u ON u.user_id = h.staff_user_id
+       WHERE h.blood_bank_id = ?
+       ORDER BY h.created_at DESC, h.history_id DESC LIMIT 200`,
+      [req.bloodBank.bank_id]
+    );
+    res.set('Cache-Control', 'no-store');
+    res.json({ history });
+  } catch (error) {
+    console.error('Blood-stock history lookup failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not load stock update history.' });
+  }
+});
+
+app.get('/api/blood-bank/alerts', requireDatabase, requireSession, requireBloodBankStaff, async (req, res) => {
+  try {
+    await syncBloodStockAlerts();
+    const [alerts] = await db.execute(
+      `SELECT alert_id, blood_group, component, alert_type, message,
+              DATE_FORMAT(first_triggered_at, '%Y-%m-%dT%H:%i:%sZ') AS first_triggered_at,
+              DATE_FORMAT(last_triggered_at, '%Y-%m-%dT%H:%i:%sZ') AS last_triggered_at
+       FROM blood_stock_alerts WHERE blood_bank_id = ? AND is_active = 1
+       ORDER BY last_triggered_at DESC LIMIT 100`,
+      [req.bloodBank.bank_id]
+    );
+    res.set('Cache-Control', 'no-store');
+    res.json({ alerts, freshness_policy: 'UTC calendar day' });
+  } catch (error) {
+    console.error('Blood-bank alerts lookup failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not load stock alerts.' });
+  }
+});
+
+app.post('/api/blood-stock/update', requireDatabase, requireSession,
+  requireBloodBankStaff, rateLimit(120, 60 * 60 * 1000), recordBloodStockUpdate);
+
+app.get('/api/blood-banks/inventory', requireDatabase, rateLimit(60, 60 * 1000), async (req, res) => {
+  const bloodGroup = req.query.blood_group === undefined
+    ? ''
+    : normalizeBloodGroup(req.query.blood_group);
+  const component = typeof req.query.component === 'string' ? req.query.component : '';
+  const city = typeof req.query.city === 'string' ? req.query.city.trim() : '';
+  const components = new Set(['whole_blood', 'red_cells', 'platelets', 'plasma']);
+  const requiredUnits = req.query.required_units === undefined ? 0 : Number(req.query.required_units);
+  if (!BLOOD_GROUPS.has(bloodGroup) || !components.has(component) ||
+      (city && !isNonEmptyString(city, 80)) ||
+      !Number.isSafeInteger(requiredUnits) || requiredUnits < 0 || requiredUnits > 100000) {
+    return res.status(400).json({ message: 'Choose a valid blood group, component, and city filter.' });
+  }
+  try {
+    const filters = ['b.is_active = 1', "(b.verification_status = 'verified' OR b.verified = 1)"];
+    const values = [bloodGroup, component, bloodGroup, component];
+    if (city) { filters.push('LOWER(b.city) = LOWER(?)'); values.push(city); }
+    const [rows] = await db.execute(
+      `SELECT s.stock_id, b.blood_bank_id, b.bank_name, b.address_text, b.phone, b.email,
+              b.city, b.district, b.state, ? AS blood_group, ? AS component,
+              s.physical_units, s.reserved_units, s.issued_units, s.discarded_units,
+              s.total_eligible_units, s.available_units,
+              COALESCE(t.low_stock_threshold, s.low_stock_threshold, 0) AS threshold,
+              s.verification_status,
+              DATE_FORMAT(s.last_updated, '%Y-%m-%dT%H:%i:%sZ') AS last_updated
+       FROM blood_banks b
+       LEFT JOIN blood_stock s ON s.blood_bank_id = b.blood_bank_id
+         AND s.blood_group = ? AND s.component = ?
+       LEFT JOIN blood_stock_thresholds t ON t.blood_bank_id = b.blood_bank_id
+         AND t.blood_group = ? AND t.component = ?
+       WHERE ${filters.join(' AND ')}
+       ORDER BY b.state, b.city, b.bank_name
+       LIMIT 500`,
+      [bloodGroup, component, bloodGroup, component, bloodGroup, component, ...values]
+    );
+    res.json({
+      inventory: rows.map(row => formatBloodStockRow(row, requiredUnits)),
+      checked_at: new Date().toISOString(),
+      source: 'LifeDrop staff-entered daily stock; not an external live feed or reservation'
+    });
+  } catch (error) {
+    console.error('Blood-bank inventory search failed:', error.code || error.message);
+    res.status(500).json({ message: 'Could not load blood-bank inventory.' });
+  }
+});
+
+app.get('/api/blood-bank/inventory', requireDatabase, requireSession,
+  requireBloodBankStaff, async (req, res) => {
+    try {
+      await syncBloodStockAlerts();
+      const [[inventory], [history], [alerts], [audit], [notifications]] = await Promise.all([
+        db.execute(
+          `SELECT s.stock_id, s.blood_group, s.component, s.physical_units,
+                  s.reserved_units, s.issued_units, s.discarded_units,
+                  s.total_eligible_units, s.available_units,
+                  COALESCE(t.low_stock_threshold, s.low_stock_threshold, 0) AS low_stock_threshold,
+                  s.verification_status,
+                  DATE_FORMAT(last_updated, '%Y-%m-%dT%H:%i:%sZ') AS last_updated
+           FROM blood_stock s LEFT JOIN blood_stock_thresholds t
+             ON t.blood_bank_id = s.blood_bank_id
+            AND t.blood_group = s.blood_group AND t.component = s.component
+           WHERE s.blood_bank_id = ? ORDER BY s.last_updated DESC, s.blood_group, s.component LIMIT 500`,
+          [req.bloodBank.bank_id]
+        ),
+        db.execute(
+          `SELECT h.history_id, h.stock_id, h.blood_group, h.component,
+                  h.previous_physical_units, h.physical_units,
+                  h.previous_reserved_units, h.reserved_units,
+                  h.previous_issued_units, h.issued_units,
+                  h.previous_discarded_units, h.discarded_units,
+                  h.previous_available_units, h.available_units,
+                  h.transaction_type, h.quantity_changed, h.remarks,
+                  u.full_name AS staff_name,
+                  DATE_FORMAT(h.created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at
+           FROM stock_history h JOIN users u ON u.user_id = h.staff_user_id
+           WHERE h.blood_bank_id = ? ORDER BY h.created_at DESC, h.history_id DESC LIMIT 100`,
+          [req.bloodBank.bank_id]
+        ),
+        db.execute(
+          `SELECT alert_id, blood_group, component, alert_type, message,
+                  DATE_FORMAT(last_triggered_at, '%Y-%m-%dT%H:%i:%sZ') AS last_triggered_at
+           FROM blood_stock_alerts WHERE blood_bank_id = ? AND is_active = 1
+           ORDER BY last_triggered_at DESC LIMIT 100`,
+          [req.bloodBank.bank_id]
+        ),
+        db.execute(
+          `SELECT audit_id, inventory_id, action, details,
+                  DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at
+           FROM blood_bank_audit_logs WHERE bank_id = ?
+           ORDER BY created_at DESC, audit_id DESC LIMIT 100`,
+          [req.bloodBank.bank_id]
+        ),
+        db.execute(
+          `SELECT notification_id, request_id,
+                  DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at
+           FROM blood_bank_notifications
+           WHERE staff_user_id = ? AND read_at IS NULL
+           ORDER BY created_at DESC LIMIT 100`,
+          [req.user.user_id]
+        )
+      ]);
+      res.set('Cache-Control', 'no-store');
+      res.json({
+        bank: { ...req.bloodBank, bank_id: req.bloodBank.bank_id },
+        inventory: inventory.map(row => formatBloodStockRow({ ...row, ...req.bloodBank, blood_bank_id: req.bloodBank.bank_id })),
+        history,
+        alerts,
+        audit,
+        notifications,
+        freshness_policy: 'UTC calendar day'
+      });
+    } catch (error) {
+      console.error('Blood-bank inventory dashboard failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not load your blood-bank inventory.' });
+    }
+  }
+);
+
+app.post('/api/blood-bank/inventory', requireDatabase, requireSession,
+  requireBloodBankStaff, rateLimit(120, 60 * 60 * 1000), recordBloodStockUpdate);
 
 app.get('/api/donors/search', requireDatabase, requireSession, rateLimit(30, 60 * 1000), async (req, res) => {
   if (req.user.role !== 'patient') {
@@ -2636,6 +5259,11 @@ app.get('/api/donors/search', requireDatabase, requireSession, rateLimit(30, 60 
       `SELECT u.full_name AS display_name,
               COALESCE(NULLIF(d.place, ''), NULLIF(u.place, '')) AS place,
               d.blood_group, d.city, d.state,
+              d.last_confirmed_at IS NOT NULL AS has_confirmation,
+              1 AS confirmation_current,
+              (${DONOR_ELIGIBILITY_SQL}) AS eligible_for_matching,
+              d.public_contact_consent = 1 AS contact_consent,
+              d.public_identity_consent = 1 AS identity_consent,
               d.emergency_response_consent = 1 AS emergency_matching_enabled,
               CASE WHEN COALESCE(d.availability_mode, 'general') = 'selected_dates'
                 THEN 'Available on selected date' ELSE 'Available' END AS availability_status,
@@ -2650,18 +5278,38 @@ app.get('/api/donors/search', requireDatabase, requireSession, rateLimit(30, 60 
          AND d.public_contact_consent = 1
          AND d.public_identity_consent = 1
          AND d.last_confirmed_at IS NOT NULL
-         AND d.blood_group = ?
+         AND ${DONOR_ELIGIBILITY_SQL}
+         AND d.blood_group IN (${getCompatibleDonorBloodGroups(bloodGroup).map(() => '?').join(', ')})
          AND ${locationFilter}
          AND ${dateAvailabilityFilter}
          ${areaFilter}
        ORDER BY CASE WHEN ? = 1 THEN d.emergency_response_consent ELSE 0 END DESC,
                 d.last_confirmed_at DESC
        LIMIT 50`,
-      [requiredDate || null, bloodGroup, ...locationValues,
+      [requiredDate || null, ...getCompatibleDonorBloodGroups(bloodGroup), ...locationValues,
         ...(requiredDate ? [requiredDate] : []), ...(area ? [area] : []), emergency ? 1 : 0]
     );
     res.json({
-      donors,
+      donors: donors
+        .filter(donor =>
+          areBloodGroupsCompatible(donor.blood_group, bloodGroup) &&
+          isAvailabilitySearchEligible({
+            state: 'available',
+            confirmed: Boolean(donor.has_confirmation),
+            current: Boolean(donor.confirmation_current),
+            eligible: Boolean(donor.eligible_for_matching),
+            contactConsent: Boolean(donor.contact_consent),
+            identityConsent: Boolean(donor.identity_consent)
+          })
+        )
+        .map(({
+          has_confirmation,
+          confirmation_current,
+          eligible_for_matching,
+          contact_consent,
+          identity_consent,
+          ...donor
+        }) => donor),
       checked_at: new Date().toISOString(),
       search_area: radius === 'wider' ? `${state} (wider search)` : `${city}, ${state}`,
       radius_km: radius === 'wider' ? null : Number(radius),
@@ -2683,6 +5331,7 @@ app.get('/api/availability', requireDatabase, requireSession, rateLimit(30, 60 *
     return res.status(403).json({ message: 'Patient accounts can search for available donors.' });
   }
   const city = typeof req.query.city === 'string' ? req.query.city.trim() : '';
+  const area = typeof req.query.area === 'string' ? req.query.area.trim() : '';
   const state = typeof req.query.state === 'string' ? req.query.state.trim() : '';
   if (req.query.blood_group !== undefined && typeof req.query.blood_group !== 'string') {
     return res.status(400).json({ message: 'Select a valid blood group.' });
@@ -2691,6 +5340,7 @@ app.get('/api/availability', requireDatabase, requireSession, rateLimit(30, 60 *
   if (
     !isNonEmptyString(city, 80) ||
     city.length < 2 ||
+    (area && !isNonEmptyString(area, 100)) ||
     !isNonEmptyString(state, 80) ||
     !BLOOD_GROUPS.has(bloodGroup)
   ) {
@@ -2703,14 +5353,20 @@ app.get('/api/availability', requireDatabase, requireSession, rateLimit(30, 60 *
       'd.public_contact_consent = 1',
       'd.public_identity_consent = 1',
       'd.last_confirmed_at IS NOT NULL',
+      DONOR_ELIGIBILITY_SQL,
       "COALESCE(d.availability_mode, 'general') = 'general'",
       'd.availability_expires_at > UTC_TIMESTAMP()',
       'LOWER(d.city) = LOWER(?)',
       'LOWER(d.state) = LOWER(?)'
     ];
     const values = [city, state];
-    filters.push('d.blood_group = ?');
-    values.push(bloodGroup);
+    if (area) {
+      filters.push("LOWER(COALESCE(NULLIF(d.place, ''), NULLIF(u.place, ''), '')) = LOWER(?)");
+      values.push(area);
+    }
+    const compatibleBloodGroups = getCompatibleDonorBloodGroups(bloodGroup);
+    filters.push(`d.blood_group IN (${compatibleBloodGroups.map(() => '?').join(', ')})`);
+    values.push(...compatibleBloodGroups);
     const [donors] = await db.execute(
       `SELECT u.full_name AS name, d.blood_group, d.city, d.state,
               COALESCE(NULLIF(d.place, ''), NULLIF(u.place, '')) AS place,

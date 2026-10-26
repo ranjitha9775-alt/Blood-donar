@@ -121,6 +121,7 @@
     .search-results { margin-top: 20px; }
     .stock-search { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: end; gap: 12px; }
     .stock-search .btn { grid-column: 1 / -1; }
+    .daily-stock-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); align-items: end; gap: 12px; }
     .stock-results { margin-top: 20px; }
     .stock-contact { margin-bottom: 15px; padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: #fffafb; }
     .stock-contact h3 { margin: 0 0 7px; font-size: 15px; }
@@ -315,6 +316,21 @@
           <div class="stock-results" id="hospitalStockResults" aria-live="polite"></div>
           <div class="notice" role="note" style="margin-top:20px"><div><strong>Important:</strong> Stock figures are reports from blood centres, not a reservation or guarantee. Verify availability directly with the centre before travelling. For emergencies in India, contact the patient's hospital and call <a href="tel:112"><strong>112</strong></a>.</div></div>
         </div>
+        <div class="section-head" style="margin-top:28px"><div><p class="section-kicker">LifeDrop daily updates</p><h2>Search verified daily stock</h2><p class="section-desc">Stock is entered by authorized staff, shown only for verified blood banks, and marked Update Required when older than the configured deadline. Availability is not a reservation.</p></div></div>
+        <div class="panel">
+          <form id="dailyStockSearchForm" class="daily-stock-grid">
+            <div class="field"><label for="dailyStockState">State</label><input id="dailyStockState" name="state" maxlength="80" autocomplete="address-level1"></div>
+            <div class="field"><label for="dailyStockDistrict">District</label><input id="dailyStockDistrict" name="district" maxlength="80"></div>
+            <div class="field"><label for="dailyStockCity">City</label><input id="dailyStockCity" name="city" maxlength="80"></div>
+            <div class="field"><label for="dailyStockGroup">Blood group</label><select id="dailyStockGroup" name="blood_group" required><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
+            <div class="field"><label for="dailyStockComponent">Component</label><select id="dailyStockComponent" name="component" required><option value="red_cells">Packed red blood cells</option><option value="platelets">Platelets</option><option value="plasma">Plasma</option><option value="whole_blood">Whole blood</option></select></div>
+            <div class="field"><label for="dailyStockUnits">Units needed</label><input id="dailyStockUnits" name="required_units" type="number" min="1" max="100000" step="1" value="1" required></div>
+            <button class="btn btn-primary" type="submit">Search LifeDrop stock</button>
+          </form>
+          <p class="form-hint" id="dailyStockMessage" aria-live="polite">No sample stock is shown. Search results use staff-entered database records.</p>
+          <div class="stock-results" id="dailyStockResults" aria-live="polite"></div>
+          <div id="dailyStockAlerts" class="stock-results" aria-live="polite"></div>
+        </div>
       </div>
     </section>
     <section class="soft-section" id="urgent">
@@ -417,6 +433,7 @@
         <div class="form-grid">
           <div class="field"><label for="patientRef">Patient name or reference ID</label><input id="patientRef" name="patient" required maxlength="100"></div>
           <div class="field"><label for="requestBlood">Required blood group</label><select id="requestBlood" name="blood" required><option value="">Select group</option><option>A+</option><option>A−</option><option>B+</option><option>B−</option><option>AB+</option><option>AB−</option><option>O+</option><option>O−</option></select></div>
+          <div class="field"><label for="requestComponent">Blood component</label><select id="requestComponent" name="component" required><option value="whole_blood">Whole blood</option><option value="red_cells">Red blood cells</option><option value="platelets">Platelets</option><option value="plasma">Plasma</option></select></div>
           <div class="field"><label for="units">Units required</label><input id="units" name="units" type="number" min="1" max="20" required></div>
           <div class="field"><label for="urgency">Urgency</label><select id="urgency" name="urgency" required><option value="">Select urgency</option><option>Urgent</option><option>Within 24 hours</option><option>Planned</option></select></div>
           <div class="field span-2"><label for="hospital">Hospital name</label><input id="hospital" name="hospitalName" required maxlength="150"></div>
@@ -432,6 +449,7 @@
         <div class="form-message" id="requestMessage" aria-live="polite"></div>
         <div class="form-actions"><button class="btn btn-outline" type="button" data-close>Cancel</button><button class="btn btn-primary" type="submit">Submit request</button></div>
       </form>
+      <div id="requestMatchingBanks" class="stock-results" aria-live="polite"></div>
     </div>
   </dialog>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
