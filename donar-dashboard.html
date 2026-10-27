@@ -97,7 +97,7 @@
 
     <section class="card" id="availabilityCard" aria-labelledby="availabilityTitle" hidden>
       <h2 id="availabilityTitle">My Donation Availability</h2>
-      <p class="muted">Set whether you are available to donate and choose how long your confirmation remains current. This records availability only; donors do not enter blood-unit quantities. Unknown or expired confirmations are shown as Unconfirmed and are not matched.</p>
+      <p class="muted">Set whether you are available to donate. An Available confirmation remains current for 24 hours and must be reconfirmed to renew. This records availability only; donors do not enter blood-unit quantities. Unknown or expired confirmations are shown as Unconfirmed and are not matched.</p>
       <div class="status-panel">
         <div><strong>Current status</strong><br><span class="status-label" id="availabilityStatus">Loading…</span></div>
         <div><strong>Last confirmed</strong><br><time class="muted" id="lastConfirmedAt">Not confirmed yet</time></div>
@@ -130,7 +130,6 @@
         <label class="consent"><input id="publicContactConsent" type="checkbox"><span>Allow my confirmed blood group and registered city/state to appear in patient Live Donor Search. This must be enabled for patients to find me.</span></label>
         <label class="consent"><input id="publicIdentityConsent" type="checkbox"><span>Also show my registered name and saved area/locality in matching results. Location comes from my profile, not live GPS. If I have not saved an area, patients see that it was not provided. My phone, email, and exact address stay private unless I accept a specific request and separately consent to sharing my contact details.</span></label>
         <label class="consent"><input id="emergencyResponseConsent" type="checkbox"><span>Optional: allow my current availability status and last-confirmed time to be shown for matching urgent requests in my city and blood group. I may choose whether to respond to each request.</span></label>
-        <div class="field" id="availabilityExpiryField"><label for="availabilityExpiry">Availability confirmation duration</label><select id="availabilityExpiry"><option value="4">4 hours</option><option value="12">12 hours</option><option value="24" selected>24 hours</option></select>        </div>
         <p class="message" id="availabilityMessage" aria-live="polite"></p>
         <p class="message" id="donorMatchingReadiness" aria-live="polite"></p>
       </div>

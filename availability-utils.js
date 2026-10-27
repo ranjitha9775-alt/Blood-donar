@@ -6,6 +6,10 @@ const AVAILABILITY_STATES = new Set([
   "temporarily_unavailable"
 ]);
 
+function isValidAvailabilityConfirmationHours(value) {
+  return value === 24;
+}
+
 function normalizeAvailabilityState(value) {
   if (typeof value !== "string") return "";
   const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
@@ -29,4 +33,8 @@ function isAvailabilitySearchEligible({
     identityConsent === true;
 }
 
-module.exports = { isAvailabilitySearchEligible, normalizeAvailabilityState };
+module.exports = {
+  isAvailabilitySearchEligible,
+  isValidAvailabilityConfirmationHours,
+  normalizeAvailabilityState
+};

@@ -4,8 +4,16 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   isAvailabilitySearchEligible,
+  isValidAvailabilityConfirmationHours,
   normalizeAvailabilityState
 } = require("./availability-utils");
+
+test("availability confirmations use a fixed 24-hour period", () => {
+  assert.equal(isValidAvailabilityConfirmationHours(24), true);
+  assert.equal(isValidAvailabilityConfirmationHours(4), false);
+  assert.equal(isValidAvailabilityConfirmationHours(12), false);
+  assert.equal(isValidAvailabilityConfirmationHours("24"), false);
+});
 
 test("normalizes the three donor availability states", () => {
   assert.equal(normalizeAvailabilityState("Available"), "available");

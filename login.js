@@ -198,8 +198,7 @@
             ? "available"
             : "not_available",
           public_contact_consent: document.getElementById("donorAvailabilityConsent").checked,
-          emergency_response_consent: emergencyResponseConsent,
-          expires_in_hours: Number(document.getElementById("loginAvailabilityExpiry").value)
+          emergency_response_consent: emergencyResponseConsent
         })
       });
       message.textContent = data.is_available

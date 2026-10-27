@@ -43,7 +43,6 @@ function renderAvailabilityDates() {
   const mode = document.getElementById("availabilityMode");
   const useSelectedDates = mode.value === "selected_dates";
   document.getElementById("selectedDateControls").hidden = !useSelectedDates;
-  document.getElementById("availabilityExpiryField").hidden = useSelectedDates;
   if (!container) return;
   const dateInput = document.getElementById("availabilityDate");
   const tomorrow = new Date();
@@ -215,7 +214,6 @@ async function saveDonorAvailability(status) {
         public_contact_consent: document.getElementById("publicContactConsent").checked,
         public_identity_consent: document.getElementById("publicIdentityConsent").checked,
         emergency_response_consent: document.getElementById("emergencyResponseConsent").checked,
-        expires_in_hours: Number(document.getElementById("availabilityExpiry").value),
         mode,
         selected_dates: mode === "selected_dates" ? selectedAvailabilityDates : []
       })
@@ -640,6 +638,7 @@ async function searchPatientDonors(event, isRefresh = false) {
     results.replaceChildren(...cards);
   } catch (error) {
     console.error("Patient donor search failed:", error);
+    results.replaceChildren();
     message.textContent = error.message;
   } finally {
     isPatientDonorSearchRunning = false;

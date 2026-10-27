@@ -15,7 +15,11 @@ const {
   getCompatibleDonorBloodGroups
 } = require('./blood-group-utils');
 const { canAccessBloodBankPortal } = require('./authorization-utils');
-const { isAvailabilitySearchEligible, normalizeAvailabilityState } = require('./availability-utils');
+const {
+  isAvailabilitySearchEligible,
+  isValidAvailabilityConfirmationHours,
+  normalizeAvailabilityState
+} = require('./availability-utils');
 const { calculateStock, getStockStatus, isStockFreshForUtcDate } = require('./stock-utils');
 const {
   canRequestEligibilityReview,
@@ -35,7 +39,6 @@ const PORT = Number(process.env.PORT || 3000);
 const DATABASE_NAME = process.env.DB_NAME || 'lifedrop';
 const PORTAL_SCHEMA = DATABASE_NAME === 'blood_donar_portal';
 const AVAILABILITY_HOURS = 24;
-const AVAILABILITY_DURATIONS_HOURS = [4, 12, 24];
 const DONATION_ELIGIBILITY_MONTHS = Number(process.env.DONATION_ELIGIBILITY_MONTHS || 3);
 if (!Number.isInteger(DONATION_ELIGIBILITY_MONTHS) ||
     DONATION_ELIGIBILITY_MONTHS < 1 || DONATION_ELIGIBILITY_MONTHS > 24) {
@@ -4464,14 +4467,14 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
       typeof publicContactConsent !== 'boolean' ||
       (publicIdentityConsent !== undefined && typeof publicIdentityConsent !== 'boolean') ||
       typeof emergencyResponseConsent !== 'boolean' ||
-      !AVAILABILITY_DURATIONS_HOURS.includes(expiresInHours) ||
+      !isValidAvailabilityConfirmationHours(expiresInHours) ||
       !Array.isArray(selectedDates) ||
       selectedDates.length > 100 ||
       (mode === 'selected_dates' && selectedDates.length === 0) ||
       (mode !== 'selected_dates' && selectedDates.length > 0) ||
       (mode === 'unavailable' && !['not_available', 'temporarily_unavailable'].includes(status)) ||
       (mode !== 'unavailable' && status !== 'available')) {
-    return res.status(400).json({ message: 'Choose a valid status, a 4-, 12-, or 24-hour duration, and confirm your privacy choices.' });
+    return res.status(400).json({ message: 'Choose a valid status, confirm your privacy choices, and use the fixed 24-hour confirmation period.' });
   }
   const parsedDates = [];
   const today = new Date().toISOString().slice(0, 10);
@@ -4490,9 +4493,7 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
 
   try {
     const isAvailable = status === 'available';
-    const availableUntil = isAvailable && mode === 'general'
-      ? formatSqlUtcDateTime(new Date(Math.ceil(Date.now() / 1000) * 1000 + expiresInHours * 60 * 60 * 1000))
-      : null;
+    const hasGeneralConfirmation = isAvailable && mode === 'general';
     const connection = await db.getConnection();
     let updatedDonor;
     try {
@@ -4503,7 +4504,10 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
            public_contact_consent = ?,
            public_identity_consent = CASE WHEN ? IS NULL THEN public_identity_consent ELSE ? END,
            emergency_response_consent = ?,
-           availability_expires_at = ?, available_until = ?,
+           availability_expires_at = CASE WHEN ? = 1
+             THEN DATE_ADD(UTC_TIMESTAMP(), INTERVAL 24 HOUR) ELSE NULL END,
+           available_until = CASE WHEN ? = 1
+             THEN DATE_ADD(UTC_TIMESTAMP(), INTERVAL 24 HOUR) ELSE NULL END,
            last_confirmed_at = UTC_TIMESTAMP()
        WHERE user_id = ?`,
         [status, mode, isAvailable ? 1 : 0, isAvailable ? 1 : 0,
@@ -4511,18 +4515,22 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
           publicIdentityConsent === undefined ? null : 1,
           isAvailable && publicContactConsent && publicIdentityConsent ? 1 : 0,
           isAvailable && emergencyResponseConsent ? 1 : 0,
-          availableUntil, availableUntil, req.user.user_id]
+          hasGeneralConfirmation ? 1 : 0,
+          hasGeneralConfirmation ? 1 : 0,
+          req.user.user_id]
       );
       if (PORTAL_SCHEMA) {
         await connection.execute(
           `INSERT INTO donor_availability
              (donor_user_id, is_available, confirmed_at, expires_at)
-           VALUES (?, ?, UTC_TIMESTAMP(), ?)
+           SELECT user_id, ?, UTC_TIMESTAMP(), availability_expires_at
+           FROM donors
+           WHERE user_id = ?
            ON DUPLICATE KEY UPDATE
              is_available = VALUES(is_available),
              confirmed_at = VALUES(confirmed_at),
              expires_at = VALUES(expires_at)`,
-          [req.user.user_id, isAvailable ? 1 : 0, availableUntil]
+          [isAvailable ? 1 : 0, req.user.user_id]
         );
       }
       if (mode === 'selected_dates') {
