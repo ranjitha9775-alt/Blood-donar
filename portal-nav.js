@@ -5,7 +5,7 @@
     ["Home", "/"],
     ["Donor Portal", "/donor-dashboard.html"],
     ["Donor Eligibility", "/donor-eligibility.html"],
-    ["Blood Bank Portal", "/login?next=%2Fblood-bank-portal.html"],
+    ["Blood Bank Portal", "/blood-bank-portal.html"],
     ["Patient Portal", "/login?next=%2Fpatient-dashboard.html"],
     ["Live Donor Search", "/login?next=%2Fpatient-dashboard.html"],
     ["Emergency Blood Request", "/#urgent"],

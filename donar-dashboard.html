@@ -30,13 +30,18 @@
     .status-panel { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px; margin: 18px 0; padding: 15px; border-radius: 12px; background: #f7f8fa; }
     .status-label { display: inline-block; padding: 5px 10px; border-radius: 999px; background: #e7e9ee; font-weight: 750; }
     .status-label.available { color: #145b39; background: #e2f4e9; }
-    .status-label.not-available { color: #a51f32; background: #fde8eb; }
+    .status-label.not-available { color: #454b55; background: #e7e9ee; }
     .status-label.needs-confirmation { color: #765400; background: #fff2cc; }
     .choice-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
-    .choice { min-height: 55px; border: 1px solid var(--line); background: #fff; }
-    .choice.available { color: var(--green); border-color: #b8dfc7; }
-    .choice.not-available { color: #a51f32; border-color: #f0c0c7; }
-    .choice[aria-pressed="true"] { box-shadow: 0 0 0 2px currentColor; }
+    .availability-window { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .availability-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 18px 0; }
+    .availability-toggle { min-width: 180px; border-radius: 999px; background: #e7e9ee; color: #454b55; }
+    .availability-toggle.available { background: #167447; color: #fff; }
+    .availability-toggle .toggle-icon { margin-right: 7px; font-size: 18px; }
+    .availability-current { margin: 0; font-weight: 750; }
+    dialog { width: min(520px, calc(100% - 28px)); max-height: 90vh; overflow: auto; padding: 22px; border: 1px solid var(--line); border-radius: 16px; color: var(--ink); box-shadow: 0 18px 60px #10182840; }
+    dialog::backdrop { background: #18202d80; }
+    .dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 16px; }
     .consent { display: flex; align-items: flex-start; gap: 10px; margin: 14px 0; color: #474d58; font-size: 13px; }
     .consent input { flex: 0 0 18px; width: 18px; height: 18px; margin-top: 2px; accent-color: var(--red); }
     button { min-height: 44px; padding: 0 16px; border: 0; border-radius: 9px; background: var(--red); color: #fff; font: inherit; font-weight: 750; cursor: pointer; }
@@ -53,7 +58,7 @@
     .request-details p { margin: 7px 0; }
     .safety { padding: 12px 14px; border-left: 3px solid #e1aa29; background: #fff8e6; color: #5c4a1d; font-size: 13px; }
     [hidden] { display: none !important; }
-    @media (max-width: 520px) { .card { padding: 17px; } .choice-list { grid-template-columns: 1fr; } .nav { align-items: flex-start; padding: 12px 0; } }
+    @media (max-width: 520px) { .card { padding: 17px; } .choice-list, .availability-window { grid-template-columns: 1fr; } .nav { align-items: flex-start; padding: 12px 0; } }
   </style>
 </head>
 <body data-notification-role="donor">
@@ -70,7 +75,7 @@
     <h1>Donor dashboard</h1>
     <p class="muted" id="welcome">Checking your login…</p>
     <p class="muted" id="donorBloodGroupSummary" hidden>Your registered blood group: <strong id="donorBloodGroupValue"></strong></p>
-    <p class="muted">To update your donor status, use the Available or Not Available buttons in the My Donation Availability section below.</p>
+    <p class="muted">Use your availability control to update your live status and scheduled window.</p>
 
     <section class="card" id="donationHistoryCard" aria-labelledby="donationHistoryTitle" hidden>
       <h2 id="donationHistoryTitle">Donation History</h2>
@@ -97,16 +102,17 @@
 
     <section class="card" id="availabilityCard" aria-labelledby="availabilityTitle" hidden>
       <h2 id="availabilityTitle">My Donation Availability</h2>
-      <p class="muted">Set whether you are available to donate. An Available confirmation remains current for 24 hours and must be reconfirmed to renew. This records availability only; donors do not enter blood-unit quantities. Unknown or expired confirmations are shown as Unconfirmed and are not matched.</p>
+      <p class="muted">Set whether you are available to donate. General availability runs only between the start and end times you choose; the default window is 24 hours. Times are entered in your browser’s local timezone and stored in UTC. This records availability only; donors do not enter blood-unit quantities. Unknown, not-yet-started, or expired confirmations are not matched.</p>
       <div class="status-panel">
-        <div><strong>Current status</strong><br><span class="status-label" id="availabilityStatus">Loading…</span></div>
+        <div><strong>Current status</strong><br><span class="status-label" id="availabilityStatus">Loading…</span><p class="availability-current" id="availabilityCurrentMessage" aria-live="polite">Checking your live status…</p></div>
         <div><strong>Last confirmed</strong><br><time class="muted" id="lastConfirmedAt">Not confirmed yet</time></div>
       </div>
-      <div class="choice-list" aria-label="Set donation availability">
-        <button id="availableToDonate" class="choice available" type="button" aria-pressed="false">Available to Donate</button>
-        <button id="notAvailable" class="choice not-available" type="button" aria-pressed="false">Not Available</button>
-        <button id="temporarilyUnavailable" class="choice not-available" type="button" aria-pressed="false">Temporarily Unavailable</button>
+      <div class="availability-controls">
+        <button id="availabilityToggle" class="availability-toggle" type="button" aria-pressed="false"><span class="toggle-icon" aria-hidden="true">×</span><span class="toggle-label">Not Available</span></button>
+        <button id="updateAvailabilityButton" class="button-secondary" type="button">Update Availability</button>
+        <button id="temporarilyUnavailable" class="button-secondary" type="button">Temporarily Unavailable</button>
       </div>
+      <p class="muted" id="availabilityWindowSummary">Availability dates have not been set.</p>
       <div>
         <div class="field">
           <label for="availabilityMode">Availability schedule</label>
@@ -115,6 +121,7 @@
             <option value="selected_dates">Available on Selected Dates</option>
           </select>
         </div>
+        <div id="generalAvailabilityWindow" hidden></div>
         <div id="selectedDateControls" hidden>
           <div class="field">
             <label for="availabilityDate">Choose a date you can donate</label>
@@ -134,6 +141,24 @@
         <p class="message" id="donorMatchingReadiness" aria-live="polite"></p>
       </div>
     </section>
+
+    <dialog id="availabilityDialog" aria-labelledby="availabilityDialogTitle">
+      <form id="availabilityWindowForm">
+        <h2 id="availabilityDialogTitle">Update Availability</h2>
+        <p class="muted">Choose when your availability starts and ends. Your local times are converted to UTC for storage. Saving dates while unavailable does not turn availability on.</p>
+        <div class="availability-window">
+          <div class="field"><label for="availabilityStartDate">Start date</label><input id="availabilityStartDate" type="date" required></div>
+          <div class="field"><label for="availabilityStartTime">Start time</label><input id="availabilityStartTime" type="time" required></div>
+          <div class="field"><label for="availabilityEndDate">End date</label><input id="availabilityEndDate" type="date" required></div>
+          <div class="field"><label for="availabilityEndTime">End time</label><input id="availabilityEndTime" type="time" required></div>
+        </div>
+        <p class="message" id="availabilityWindowMessage" aria-live="polite"></p>
+        <div class="dialog-actions">
+          <button class="button-secondary" id="cancelAvailabilityUpdate" type="button">Cancel</button>
+          <button id="saveAvailabilityWindow" type="submit">Save availability</button>
+        </div>
+      </form>
+    </dialog>
 
     <section class="card" id="healthScreeningCard" aria-labelledby="healthScreeningTitle" hidden>
       <h2 id="healthScreeningTitle">Donor Health Screening</h2>

@@ -242,6 +242,7 @@ async function submitDailyStock(event) {
       body: JSON.stringify({
         blood_group: form.elements.blood_group.value,
         component: form.elements.component.value,
+        stock_date: form.elements.stock_date.value,
         physical_units: quantities[0],
         reserved_units: quantities[1],
         issued_units: quantities[2],
@@ -278,6 +279,11 @@ async function initializeStockPortal() {
     }
     if (window.LifeDropNotifications) window.LifeDropNotifications.start();
     document.getElementById("logout-button").hidden = false;
+    const stockDate = document.getElementById("stockDate");
+    const todayUtc = new Date().toISOString().slice(0, 10);
+    stockDate.value = todayUtc;
+    stockDate.min = todayUtc;
+    stockDate.max = todayUtc;
     document.getElementById("inventoryForm").addEventListener("submit", submitDailyStock);
     document.getElementById("logout-button").addEventListener("click", async () => {
       try {

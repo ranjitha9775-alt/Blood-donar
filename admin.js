@@ -44,6 +44,7 @@
   function normalizeAvailabilityValue(value) {
     const normalized = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
     if (normalized === "available") return "available";
+    if (normalized === "scheduled") return "scheduled";
     if (normalized === "expired") return "expired";
     if (normalized === "temporarily_unavailable") return "temporarily_unavailable";
     if (["unavailable", "not_available"].includes(normalized)) return "unavailable";
@@ -57,6 +58,14 @@
     const confirmedAt = Date.parse(donor.last_confirmed_at);
     if (status === "expired") {
       return Number.isFinite(confirmedAt) ? "expired" : "unconfirmed";
+    }
+    if (status === "scheduled") {
+      const startAt = Date.parse(donor.availability_starts_at);
+      const endAt = Date.parse(donor.available_until);
+      return Number.isFinite(startAt) && startAt > Date.now() &&
+        Number.isFinite(endAt) && endAt > Date.now()
+        ? "scheduled"
+        : "unconfirmed";
     }
     if (status === "available") {
       const expiresAt = Date.parse(donor.available_until);
@@ -87,6 +96,7 @@
 
   function availabilityLabel(status) {
     if (status === "available") return "Available";
+    if (status === "scheduled") return "Scheduled";
     if (status === "unavailable") return "Not Available";
     if (status === "temporarily_unavailable") return "Temporarily Unavailable";
     if (status === "expired") return "Expired";
@@ -153,6 +163,9 @@
           .replace(/: available\b/g, ": Available")
           .replace(/: unavailable\b/g, ": Not available")
         : "—";
+      const availabilityWindow = status === "scheduled"
+        ? `Starts ${formatDate(donor.availability_starts_at)} · ends ${formatDate(donor.available_until)}`
+        : formatDate(donor.available_until);
       return [
         donor.full_name,
         donor.username || "Legacy account",
@@ -161,7 +174,7 @@
         donor.city,
         donor.place,
         availabilityLabel(status),
-        formatDate(donor.available_until),
+        availabilityWindow,
         formatDate(donor.last_confirmed_at),
         donor.email,
         donor.last_donation_date,

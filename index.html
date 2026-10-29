@@ -237,7 +237,7 @@
         <span>Life<span>Drop</span></span>
       </a>
       <nav class="nav-links" id="navLinks" aria-label="Main navigation">
-        <a href="#home">Home</a><a href="/donor-dashboard.html">Donor Portal</a><a href="/donor-eligibility.html">Donor Eligibility</a><a href="/login?next=%2Fblood-bank-portal.html">Blood Bank Portal</a><a href="/login?next=%2Fpatient-dashboard.html">Patient Portal</a><a href="/login?next=%2Fpatient-dashboard.html">Live Donor Search</a><a href="#urgent">Emergency Blood Request</a><a href="/admin">Admin Portal</a><a href="/login">Login / Register</a>
+        <a href="#home">Home</a><a href="/donor-dashboard.html">Donor Portal</a><a href="/donor-eligibility.html">Donor Eligibility</a><a href="/blood-bank-portal.html">Blood Bank Portal</a><a href="/login?next=%2Fpatient-dashboard.html">Patient Portal</a><a href="/login?next=%2Fpatient-dashboard.html">Live Donor Search</a><a href="#urgent">Emergency Blood Request</a><a href="/admin">Admin Portal</a><a href="/login">Login / Register</a>
       </nav>
       <div class="nav-actions">
         <button class="btn btn-outline btn-small" type="button" data-open="requestDialog">Emergency request</button>
@@ -290,7 +290,7 @@
         <div class="quick-grid">
           <a href="/donor-dashboard.html" class="quick-card"><span class="icon-box" aria-hidden="true">D</span><h3>Donor Portal</h3><p>Manage donation availability and selected dates, review emergency requests, and update your private screening.</p><span class="arrow">Open Donor Portal →</span></a>
           <a href="/patient-dashboard.html" class="quick-card"><span class="icon-box" aria-hidden="true">P</span><h3>Patient Portal</h3><p>Search for confirmed donors, submit emergency blood requests, and follow donor responses.</p><span class="arrow">Open Patient Portal →</span></a>
-          <a href="/login?next=%2Fblood-bank-portal.html" class="quick-card"><span class="icon-box" aria-hidden="true">B</span><h3>Blood Bank Daily Stock Portal</h3><p>Authorized blood-bank staff can sign in to submit and review daily stock for their assigned bank.</p><span class="arrow">Staff sign in →</span></a>
+          <a href="/blood-bank-portal.html" class="quick-card"><span class="icon-box" aria-hidden="true">B</span><h3>Blood Bank Daily Stock Portal</h3><p>Authorized blood-bank staff can sign in to submit and review daily stock for their assigned bank.</p><span class="arrow">Staff sign in →</span></a>
           <a href="/admin" class="quick-card"><span class="icon-box" aria-hidden="true">A</span><h3>Admin Portal</h3><p>Review donor availability, donor registrations, blood requests, and matching progress.</p><span class="arrow">Open Admin Portal →</span></a>
         </div>
       </div>
@@ -428,11 +428,12 @@
     </div>
   </dialog>
   <dialog id="requestDialog" aria-labelledby="requestTitle">
-    <div class="dialog-head"><div><h2 id="requestTitle">Submit a blood request</h2><p>Sign in is required. Request information is stored in the configured MySQL database.</p></div><button class="close-btn" type="button" aria-label="Close" data-close>×</button></div>
+    <div class="dialog-head"><div><h2 id="requestTitle">Submit a blood request</h2><p>Sign in with a patient account to submit. Request information is stored in the configured MySQL database.</p></div><button class="close-btn" type="button" aria-label="Close" data-close>×</button></div>
     <div class="dialog-body">
       <div id="requestLoginNotice">
         <p id="requestAccessMessage">Checking your login status…</p>
         <a class="btn btn-primary" href="/login?next=%2F%23urgent" hidden>Log in to continue</a>
+        <button id="requestLogoutForPatient" class="btn btn-outline" type="button" hidden>Log out to use a patient account</button>
       </div>
       <form id="requestForm" hidden>
         <div class="form-grid">
@@ -449,7 +450,7 @@
           <div class="field"><label for="contactPhone">Contact phone</label><input id="contactPhone" name="contactPhone" type="tel" pattern="\+?[0-9][0-9 \x2d]{6,18}[0-9]" required></div>
           <div class="field"><label for="neededAt">Required date and time</label><input id="neededAt" name="neededAt" type="datetime-local" required></div>
           <label class="check-field span-2"><input name="requestConsent" type="checkbox" required><span>I consent to storing this request in MySQL. Logged-in users can see a limited summary; patient, hospital, and contact details are not shown on the board.</span></label>
-          <label class="check-field span-2"><input name="matchDonors" type="checkbox"><span>Optional: for an Urgent request, create in-app notifications for currently confirmed donors who consented to matching and have the same blood group and city. Share only the blood group, hospital name, city, and district; do not share the patient's name, hospital address, or contact details. This exact-group match does not establish medical compatibility; the hospital or blood bank must verify it. No email or SMS is sent, and no response is guaranteed.</span></label>
+          <label class="check-field span-2"><input name="matchDonors" type="checkbox"><span>Optional: for an Urgent request, create in-app notifications for currently available, eligible donors who opted into matching and have a compatible blood group and matching registered location. Donors see the request ID, blood group, hospital name, city, and district only—not the patient's name, hospital address, or contact details. This match does not establish medical compatibility; the hospital or blood bank must verify it. No email, SMS, or browser push is sent, and no response is guaranteed.</span></label>
         </div>
         <div class="form-message" id="requestMessage" aria-live="polite"></div>
         <div class="form-actions"><button class="btn btn-outline" type="button" data-close>Cancel</button><button class="btn btn-primary" type="submit">Submit request</button></div>

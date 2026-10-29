@@ -4,12 +4,15 @@
   const loginPanel = document.getElementById("loginPanel");
   const availabilityPanel = document.getElementById("availabilityPanel");
   const loginMessage = document.getElementById("loginMessage");
+  const switchAccountButton = document.getElementById("switchAccountButton");
   const searchMessage = document.getElementById("searchMessage");
   const searchResults = document.getElementById("searchResults");
   let emergencyResponseConsent = false;
   let isSearchingDonors = false;
   const registrationComplete = new URLSearchParams(window.location.search).get("registered") === "1";
-  const requestedReturn = new URLSearchParams(window.location.search).get("next");
+  const loginParams = new URLSearchParams(window.location.search);
+  const requestedReturn = loginParams.get("next");
+  const requiredRole = loginParams.get("required_role");
   let returnUrl = null;
   if (requestedReturn) {
     try {
@@ -50,6 +53,12 @@
     availabilityPanel.hidden = true;
     document.getElementById("donorAvailabilityForm").hidden = true;
     loginMessage.textContent = message;
+    switchAccountButton.hidden = true;
+  }
+
+  function showRoleMismatch(user) {
+    showLogin(`This page requires a ${requiredRole.replaceAll("_", " ")} account. You are signed in as ${user.role.replaceAll("_", " ")}. Log out and sign in with the correct account.`);
+    switchAccountButton.hidden = false;
   }
 
   function showAvailability(user) {
@@ -119,6 +128,10 @@
       });
       form.reset();
       if (returnUrl) {
+        if (requiredRole && data.user.role !== requiredRole) {
+          showRoleMismatch(data.user);
+          return;
+        }
         window.location.assign(returnUrl.href);
         return;
       }
@@ -162,7 +175,7 @@
           const availableUntil = new Date(donor.available_until);
           return `<article class="result-card">
             <h3>${escapeHtml(donor.name)} · ${escapeHtml(donor.blood_group)}</h3>
-            <p>Registered city/state: ${escapeHtml(donor.city)}, ${escapeHtml(donor.state)}</p>
+            <p>Registered city/area/state: ${escapeHtml(donor.city)}, ${escapeHtml(donor.place || "Area not provided")}, ${escapeHtml(donor.state)}</p>
             <p>Available until ${escapeHtml(availableUntil.toLocaleString())}</p>
             <p>Last confirmed ${escapeHtml(new Date(donor.last_confirmed_at).toLocaleString())}. Phone numbers are shared only after this donor accepts a specific request and consents to contact sharing.</p>
           </article>`;
@@ -223,6 +236,20 @@
     }
   });
 
+  switchAccountButton.addEventListener("click", async () => {
+    switchAccountButton.disabled = true;
+    try {
+      await requestJson("/api/logout", { method: "POST" });
+      window.location.replace(returnUrl
+        ? `/login?next=${encodeURIComponent(`${returnUrl.pathname}${returnUrl.search}${returnUrl.hash}`)}&required_role=${encodeURIComponent(requiredRole || "")}`
+        : "/login");
+    } catch (error) {
+      console.error("Could not switch accounts:", error);
+      loginMessage.textContent = error.message;
+      switchAccountButton.disabled = false;
+    }
+  });
+
   window.setInterval(() => {
     if (!availabilityPanel.hidden && !document.hidden) searchAvailableDonors();
   }, 15000);
@@ -240,7 +267,11 @@
   requestJson("/api/me")
     .then(data => {
       if (data.user && returnUrl) {
-        window.location.assign(returnUrl.href);
+        if (requiredRole && data.user.role !== requiredRole) {
+          showRoleMismatch(data.user);
+        } else {
+          window.location.assign(returnUrl.href);
+        }
       } else if (data.user) {
         showAvailability(data.user);
         if (registrationComplete) searchMessage.textContent = "Registration successful. You are now logged in.";

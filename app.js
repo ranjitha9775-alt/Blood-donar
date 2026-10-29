@@ -4,6 +4,8 @@
   const requestStatuses = ["Pending Verification", "Under Review", "Fulfilled", "Cancelled"];
   let bloodRequests = [];
   let requestAuthorized = false;
+  let requestUser = null;
+  let requestSubmissionInProgress = false;
       const sampleCamps = [
         { id: "camp-demo-01", name: "Community Care Donation Day", organiser: "LifeDrop Demo Team", venue: "Community Hall, Bengaluru", city: "Bengaluru", day: "18", month: "NOV", date: "2026-11-18", time: "10:00 AM – 3:00 PM" },
         { id: "camp-demo-02", name: "Give Blood, Share Hope", organiser: "Sample Youth Group", venue: "Demo Civic Centre, Mysuru", city: "Mysuru", day: "24", month: "NOV", date: "2026-11-24", time: "9:00 AM – 1:00 PM" },
@@ -296,16 +298,31 @@
         document.getElementById("requestLoginNotice").hidden = false;
         document.getElementById("requestAccessMessage").textContent = message;
         document.querySelector('#requestLoginNotice a').hidden = false;
+        document.getElementById("requestLogoutForPatient").hidden = true;
         requestAuthorized = false;
         renderRequests();
       }
       async function loadBloodRequests() {
         try {
+          const session = await requestJson("/api/me");
+          requestUser = session.user;
+          if (!requestUser) {
+            bloodRequests = [];
+            showRequestLogin("Log in with a patient account to submit an emergency blood request.");
+            return;
+          }
           const data = await requestJson("/api/blood-requests");
           bloodRequests = data.requests;
           requestAuthorized = true;
-          document.getElementById("requestForm").hidden = false;
-          document.getElementById("requestLoginNotice").hidden = true;
+          const isPatient = requestUser.role === "patient";
+          document.getElementById("requestForm").hidden = !isPatient;
+          document.getElementById("requestLoginNotice").hidden = isPatient;
+          document.querySelector('#requestLoginNotice a').hidden = true;
+          document.getElementById("requestLogoutForPatient").hidden = isPatient;
+          if (!isPatient) {
+            document.getElementById("requestAccessMessage").textContent =
+              `You are signed in as ${requestUser.role.replaceAll("_", " ")}. A patient account is required to submit an emergency blood request.`;
+          }
           document.getElementById("requestBoardMessage").textContent = "";
           document.getElementById("requestBoardMessage").style.color = "";
           renderRequests();
@@ -326,6 +343,18 @@
           }
         }
       }
+      document.getElementById("requestLogoutForPatient").addEventListener("click", async () => {
+        const button = document.getElementById("requestLogoutForPatient");
+        button.disabled = true;
+        try {
+          await requestJson("/api/logout", { method: "POST" });
+          window.location.assign("/login?next=%2F%23urgent");
+        } catch (error) {
+          document.getElementById("requestAccessMessage").textContent =
+            `Could not log out: ${error.message}`;
+          button.disabled = false;
+        }
+      });
       async function updateBloodRequestStatus(select) {
         const requestId = select.dataset.requestStatus;
         const previousStatus = select.dataset.currentStatus;
@@ -541,17 +570,24 @@
       document.getElementById("requestForm").addEventListener("submit", async event => {
         event.preventDefault();
         const form = event.currentTarget;
+        if (requestSubmissionInProgress) return;
+        const message = document.getElementById("requestMessage");
+        if (!form.elements.requestConsent.checked) {
+          message.textContent = "Consent to securely store this request is required before it can be submitted.";
+          message.style.color = "var(--red)";
+          return;
+        }
         if (!form.reportValidity()) return;
         const data = new FormData(form);
         const neededAt = String(data.get("neededAt"));
         const neededAtDate = new Date(neededAt);
-        const message = document.getElementById("requestMessage");
         if (!Number.isFinite(neededAtDate.getTime()) || neededAtDate.getTime() <= Date.now()) {
           message.textContent = "Choose a future date and time, or contact the hospital immediately for urgent needs.";
           message.style.color = "var(--red)";
           return;
         }
         const submitButton = form.querySelector('button[type="submit"]');
+        requestSubmissionInProgress = true;
         submitButton.disabled = true;
         message.textContent = "Submitting request securely…";
         message.style.color = "";
@@ -609,13 +645,15 @@
           }
           form.reset();
           message.textContent = matchingBanks.length
-            ? `Request ${requestId} saved. ${result.bank_staff_notifications_created || 0} authorized blood-bank staff notification(s) were saved in-app. No stock was reserved.`
+            ? `Request ${requestId} saved successfully. Status: Pending Verification. ${result.bank_staff_notifications_created || 0} authorized blood-bank staff notification(s) were saved in-app. No stock was reserved.`
             : "";
           if (!matchingBanks.length) document.getElementById("requestDialog").close();
           await loadBloodRequests();
           if (!matchingBanks.length) showToast(result.matched_donor_count
-            ? `Request ${requestId} saved. In-app notifications are ready for ${result.matched_donor_count} matching donor(s). No email or SMS was sent.`
-            : `Request ${requestId} saved. No matching donors were available or opted in. No hospital was notified.`);
+            ? `Request ${requestId} saved. In-app notifications are ready for ${result.matched_donor_count} matching donor(s). No email, SMS, or push notification was sent.`
+            : result.donor_notifications_requested
+              ? `Request ${requestId} saved. No eligible, available, opted-in donors matched. No email, SMS, or push notification was sent.`
+              : `Request ${requestId} saved. Donor notifications were not requested. No email, SMS, or push notification was sent.`);
           document.getElementById("urgent").scrollIntoView({ behavior: "smooth" });
         } catch (error) {
           console.error("Blood-request submission failed:", error);
@@ -627,6 +665,7 @@
             message.style.color = "var(--red)";
           }
         } finally {
+          requestSubmissionInProgress = false;
           submitButton.disabled = false;
         }
       });

@@ -66,10 +66,23 @@
   let currentNotifications = [];
   let unreadCount = 0;
 
-  function setOpen(open) {
+  async function setOpen(open) {
     panel.hidden = !open;
     toggle.setAttribute("aria-expanded", String(open));
-    if (open) refreshNotifications();
+    if (!open) return;
+    const refreshed = await refreshNotifications();
+    if (!refreshed) return;
+    if (unreadCount === 0) return;
+    try {
+      await requestJson(`${apiBase}/read-all`, { method: "POST", body: "{}" });
+      const readAt = new Date().toISOString();
+      currentNotifications.forEach(notification => {
+        if (!notification.read_at) notification.read_at = readAt;
+      });
+      renderNotifications(currentNotifications, 0);
+    } catch (error) {
+      listMessage.textContent = error.message;
+    }
   }
 
   function formatDate(value) {
@@ -118,6 +131,11 @@
         eligibility_review_due: ["/donor-eligibility.html", "Review eligibility"],
         emergency_request: ["/donor-dashboard.html#emergencyRequestsCard", "View request"],
         donor_response: ["/patient-dashboard.html#patientResponsesCard", "Review donor responses"],
+        request_status: ["/patient-dashboard.html#patientRequestStatusCard", "Review request status"],
+        admin_request: ["/admin#patientManagementTitle", "Review emergency requests"],
+        admin_request_status: ["/admin#patientManagementTitle", "Review request status"],
+        admin_donor_response: ["/admin#patientManagementTitle", "Review donor response"],
+        notification_failure: ["/admin#patientManagementTitle", "Review system notification"],
         patient_selected_donor: ["/donor-dashboard.html#emergencyRequestsCard", "View patient selection"],
         blood_stock_update_due: ["/blood-bank-portal.html", "Update blood stock"]
       };
@@ -167,16 +185,18 @@
       const data = await requestJson(apiBase);
       listMessage.textContent = "";
       renderNotifications(data.notifications, Number(data.unread_count));
+      return true;
     } catch (error) {
       if (error.status === 401 || error.status === 403) {
         window.LifeDropNotifications.stop();
-        return;
+        return false;
       }
       listMessage.textContent = error.message;
       list.replaceChildren(Object.assign(document.createElement("p"), {
         className: "notification-panel-message",
         textContent: "Notifications could not be loaded. Your saved availability is managed separately; try again shortly."
       }));
+      return false;
     }
   }
 

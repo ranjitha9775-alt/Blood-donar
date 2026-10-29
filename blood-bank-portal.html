@@ -69,6 +69,7 @@
       <p class="notice">Stock date and update time are recorded by the server in UTC. Every submission is retained in the update history and requires admin verification before patients see the quantities as current.</p>
       <form id="inventoryForm">
         <div class="stock-grid">
+          <div class="field"><label for="stockDate">Stock update date (UTC)</label><input id="stockDate" name="stock_date" type="date" required></div>
           <div class="field"><label for="bloodGroup">Blood group</label><select id="bloodGroup" name="blood_group" required><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
           <div class="field"><label for="component">Blood component</label><select id="component" name="component" required><option value="whole_blood">Whole blood</option><option value="red_cells">Packed red blood cells</option><option value="platelets">Platelets</option><option value="plasma">Plasma</option></select></div>
           <div class="field"><label for="physicalUnits">Physical units</label><input id="physicalUnits" name="physical_units" type="number" min="0" max="100000" step="1" required></div>
