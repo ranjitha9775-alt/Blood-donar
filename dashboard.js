@@ -3,6 +3,9 @@
 let dashboardUser = null;
 let selectedAvailabilityDates = [];
 let donorAvailabilityIntent = false;
+let verifiedDonationDate = null;
+let pendingDonationReport = null;
+let availabilityDialogAction = "update";
 let isPatientDonorSearchRunning = false;
 let patientRequestSubmissionInProgress = false;
 let hasPatientDonorSearchRun = false;
@@ -126,6 +129,8 @@ async function loadDonorAvailability() {
   const message = document.getElementById("availabilityMessage");
   try {
     const data = await requestJson("/api/availability/status");
+    verifiedDonationDate = data.verified_last_donation_date || null;
+    pendingDonationReport = data.pending_donation_report || null;
     const status = document.getElementById("availabilityStatus");
     donorAvailabilityIntent = data.availability_status === "available" &&
       ["Available", "Scheduled"].includes(data.status);
@@ -139,19 +144,45 @@ async function loadDonorAvailability() {
           : data.status === "Temporarily Unavailable" ? "temporarily-unavailable"
           : "needs-confirmation"
     }`;
+    status.dataset.reason = data.unavailability_reason || "";
     document.getElementById("lastConfirmedAt").textContent =
       formatDashboardDate(data.last_confirmed_at);
     const toggle = document.getElementById("availabilityToggle");
     toggle.classList.toggle("available", donorAvailabilityIntent);
     toggle.setAttribute("aria-pressed", String(donorAvailabilityIntent));
     toggle.querySelector(".toggle-icon").textContent = donorAvailabilityIntent ? "✓" : "×";
-    toggle.querySelector(".toggle-label").textContent = donorAvailabilityIntent ? "Available" : "Not Available";
+    toggle.querySelector(".toggle-label").textContent = donorAvailabilityIntent ? "Currently Available" : "Available";
     document.getElementById("availabilityCurrentMessage").textContent =
       data.status === "Available" ? "🟢 Currently Available" : "⚪ Currently Not Available";
+    const savedDates = Array.isArray(data.selected_dates) ? data.selected_dates : [];
+    const availableDateCount = savedDates.filter(item => item.status === "available").length;
+    const unavailableDateCount = savedDates.length - availableDateCount;
     document.getElementById("availabilityWindowSummary").textContent =
-      data.availability_starts_at && data.available_until
-        ? `Available from ${formatDashboardDate(data.availability_starts_at)} until ${formatDashboardDate(data.available_until)}.`
-        : "Availability dates have not been set.";
+      data.status === "Not Available" && data.expected_available_at
+        ? `Expected available from ${formatDashboardDate(data.expected_available_at)}. You must confirm availability again; this date will not reactivate your status.`
+        : data.availability_starts_at && data.available_until
+          ? `Available from ${formatDashboardDate(data.availability_starts_at)} until ${formatDashboardDate(data.available_until)}.`
+          : data.availability_mode === "selected_dates" && savedDates.length
+            ? `Selected-date schedule: ${availableDateCount} available date(s) and ${unavailableDateCount} marked unavailable.`
+            : savedDates.length
+              ? `Saved selected-date schedule: ${availableDateCount} available date(s) and ${unavailableDateCount} marked unavailable. Current mode: general availability.`
+              : data.availability_mode === "selected_dates"
+                ? "No future availability dates have been saved."
+                : "Availability dates have not been set.";
+    const savedReason = document.querySelector(
+      `input[name="unavailabilityReason"][value="${data.unavailability_reason || ""}"]`
+    );
+    if (savedReason) savedReason.checked = true;
+    document.getElementById("verifiedDonationDateMessage").hidden =
+      !verifiedDonationDate || Boolean(pendingDonationReport);
+    document.getElementById("verifiedDonationDateMessage").textContent =
+      verifiedDonationDate ? `Last verified donation: ${verifiedDonationDate}.` : "";
+    document.getElementById("reportedDonationDateField").hidden =
+      Boolean(verifiedDonationDate) || Boolean(pendingDonationReport);
+    if (pendingDonationReport) {
+      document.getElementById("unavailabilityMessage").textContent =
+        `Your reported donation date (${pendingDonationReport.donation_date}) is awaiting authorized verification.`;
+    }
     document.getElementById("temporarilyUnavailable").setAttribute(
       "aria-pressed",
       String(data.status === "Temporarily Unavailable")
@@ -189,7 +220,6 @@ async function loadDonorAvailability() {
     }
     if (!data.eligible_for_matching) matchingBlockers.push("complete screening and receive current qualified-staff eligibility approval");
     if (!data.public_contact_consent) matchingBlockers.push("enable sharing of blood group and city/state in Live Donor Search");
-    if (!data.public_identity_consent) matchingBlockers.push("enable display of your registered name in Live Donor Search");
     if (data.availability_mode === "selected_dates") {
       matchingBlockers.push("patients must select one of your saved available dates in their search");
       if (!data.selected_dates.some(item => item.status === "available")) {
@@ -248,6 +278,7 @@ async function loadDonorDonationHistory() {
 async function saveDonorAvailability(status, options = {}) {
   const buttons = [
     document.getElementById("availabilityToggle"),
+    document.getElementById("notAvailableButton"),
     document.getElementById("temporarilyUnavailable")
   ];
   const message = document.getElementById("availabilityMessage");
@@ -259,7 +290,7 @@ async function saveDonorAvailability(status, options = {}) {
   const mode = options.mode || (["not_available", "temporarily_unavailable"].includes(status)
     ? "unavailable"
     : document.getElementById("availabilityMode").value);
-  if (mode === "selected_dates" &&
+  if (status === "available" && mode === "selected_dates" &&
       !selectedAvailabilityDates.some(item => item.status === "available")) {
     message.textContent = "Add at least one future date marked Available before confirming selected-date availability.";
     buttons.forEach(button => { if (button) button.disabled = false; });
@@ -268,7 +299,7 @@ async function saveDonorAvailability(status, options = {}) {
   const { startsAt, endsAt } = mode === "general" ? readAvailabilityWindowInputs() : {};
   const needsWindow = mode === "general" &&
     (status === "available" || options.includeWindow === true);
-  if (needsWindow && (!startsAt || !endsAt || Date.parse(startsAt) < Date.now() ||
+  if (needsWindow && (!startsAt || !endsAt || Date.parse(startsAt) <= Date.now() ||
       Date.parse(endsAt) <= Date.parse(startsAt) ||
       Date.parse(endsAt) - Date.parse(startsAt) > 366 * 24 * 60 * 60 * 1000)) {
     const validationMessage = options.includeWindow
@@ -288,22 +319,39 @@ async function saveDonorAvailability(status, options = {}) {
         emergency_response_consent: document.getElementById("emergencyResponseConsent").checked,
         mode,
         ...(mode === "general" && startsAt && endsAt ? { starts_at: startsAt, ends_at: endsAt } : {}),
+        ...(options.unavailabilityReason ? {
+          unavailability_reason: options.unavailabilityReason,
+          expected_available_at: options.expectedAvailableAt || null,
+          reported_donation_date: options.reportedDonationDate || null
+        } : {}),
         selected_dates: mode === "selected_dates" ? selectedAvailabilityDates : []
       })
     });
-    await loadDonorAvailability();
-    await loadDonorEmergencyRequests();
-    if (window.LifeDropNotifications) {
-      await window.LifeDropNotifications.refresh();
-    }
-    document.dispatchEvent(new Event("lifedrop:notifications-updated"));
     try {
-      localStorage.setItem("lifedrop-availability-updated", String(Date.now()));
-      localStorage.setItem("lifedrop-notifications-updated", String(Date.now()));
+      await loadDonorAvailability();
+      await loadDonorEmergencyRequests();
+      if (window.LifeDropNotifications) {
+        await window.LifeDropNotifications.refresh();
+      }
+      document.dispatchEvent(new Event("lifedrop:notifications-updated"));
+      try {
+        localStorage.setItem("lifedrop-availability-updated", String(Date.now()));
+        localStorage.setItem("lifedrop-notifications-updated", String(Date.now()));
+      } catch (error) {
+        console.warn("Could not signal the open admin dashboard to refresh:", error);
+      }
     } catch (error) {
-      console.warn("Could not signal the open admin dashboard to refresh:", error);
+      console.error("Availability was saved, but the dashboard could not refresh:", error);
+      message.textContent =
+        "Your donor availability has been updated, but the dashboard could not refresh. Reload the page to see the saved status.";
+      return true;
     }
-    message.textContent = result.status === "Scheduled"
+    message.textContent = options.unavailabilityReason
+      ? "Your donor availability has been updated." +
+        (result.donation_report_status === "pending"
+          ? ` Your reported donation date (${result.reported_donation_date}) is awaiting authorized verification; availability cannot be restored until it is reviewed.`
+          : "")
+      : result.status === "Scheduled"
       ? `Saved: your availability is scheduled from ${formatDashboardDate(result.availability_starts_at)} until ${formatDashboardDate(result.available_until)} (UTC storage).`
       : result.status === "Available"
       ? mode === "selected_dates"
@@ -317,7 +365,10 @@ async function saveDonorAvailability(status, options = {}) {
     return true;
   } catch (error) {
     console.error("Donor availability could not be saved:", error);
-    message.textContent = error.message;
+    const errorTarget = options.unavailabilityReason
+      ? document.getElementById("unavailabilityMessage")
+      : message;
+    errorTarget.textContent = error.message;
     if (options.includeWindow) {
       document.getElementById("availabilityWindowMessage").textContent = error.message;
     }
@@ -664,11 +715,13 @@ async function searchPatientDonors(event, isRefresh = false) {
     message.textContent = "Searching current donor confirmations…";
   }
   const params = new URLSearchParams({
-    state: document.getElementById("searchState").value.trim(),
-    city: document.getElementById("searchCity").value.trim(),
-    area: document.getElementById("searchArea").value.trim(),
+    city: document.getElementById("searchCity").value.trim().replace(/\s+/g, " "),
     blood_group: document.getElementById("searchBloodGroup").value
   });
+  const searchState = document.getElementById("searchState").value.trim().replace(/\s+/g, " ");
+  const urgency = document.getElementById("searchUrgency").value;
+  if (searchState) params.set("state", searchState);
+  if (urgency) params.set("urgency", urgency);
   const requiredDate = document.getElementById("searchRequiredDate").value;
   if (requiredDate) params.set("required_date", requiredDate);
   try {
@@ -694,23 +747,38 @@ async function searchPatientDonors(event, isRefresh = false) {
       const card = document.createElement("article");
       card.className = "search-result";
       card.append(
-        makeTextElement("strong", `${donor.display_name} · ${donor.blood_group}`),
-        makeTextElement("p", `Registered city/state: ${donor.city}, ${donor.state}`),
-        makeTextElement("p", `Registered area: ${donor.place || "Not provided"}`),
+        makeTextElement("strong", `${donor.display_name || "Donor (name not shared)"} · ${donor.blood_group}`),
+        makeTextElement("p", `Registered city: ${donor.city}`),
+        ...(donor.place ? [makeTextElement("p", `Registered area: ${donor.place}`)] : []),
         makeTextElement("p", `${donor.availability_status} · This is registered profile location, not live GPS.`),
-        makeTextElement("p", "Phone number is shown only if this donor accepts your request and separately consents to share contact details."),
+        makeTextElement("p", "Contact details are not public. Submit a request for this donor; their phone is shown only after they accept and explicitly consent to share it."),
         makeTextElement("p", `Last confirmed: ${formatDashboardDate(donor.last_confirmed_at)} · Available until ${formatDashboardDate(donor.available_until)}.`)
       );
-      const action = makeTextElement("button", "Request Help");
+      const action = makeTextElement("button", "Contact Donor");
       action.type = "button";
       action.addEventListener("click", () => {
+        if (!donor.emergency_matching_enabled) {
+          message.textContent =
+            `${donor.display_name || "This donor"} has not opted into emergency request notifications. No request was sent; contact details are not public.`;
+          return;
+        }
         document.getElementById("patientRequestCard").hidden = false;
+        document.getElementById("targetDonorUserId").value = donor.contact_token;
+        document.getElementById("contactTargetState").value = donor.state;
+        document.getElementById("contactTargetSummary").hidden = false;
+        document.getElementById("contactTargetSummary").textContent =
+          `This request will be sent only to ${donor.display_name || "the selected donor"}. Their contact details remain private unless they accept and consent to share.`;
         document.getElementById("requestBlood").value = donor.blood_group;
         document.getElementById("requestCity").value = donor.city;
         document.getElementById("requestDistrict").value = donor.city;
         document.getElementById("requestUnits").value = "1";
         document.getElementById("requestUrgency").value = "Urgent";
         document.getElementById("requestMatchDonors").checked = true;
+        if (requiredDate) {
+          const neededAt = document.getElementById("requestNeededAt");
+          const time = neededAt.value.split("T")[1] || "10:00";
+          neededAt.value = `${requiredDate}T${time}`;
+        }
         document.getElementById("patientRequestCard").scrollIntoView({ behavior: "smooth" });
         document.getElementById("requestHospitalName").focus();
       });
@@ -860,13 +928,15 @@ async function submitPatientEmergencyRequest(event) {
       body: JSON.stringify({
         patient: dashboardUser.full_name,
         blood: document.getElementById("requestBlood").value,
+        target_donor_token: document.getElementById("targetDonorUserId").value || null,
         component: form.elements.component.value,
         units: Number(form.elements.units.value),
         urgency: form.elements.urgency.value,
         hospital_name: form.elements.hospital_name.value.trim(),
         hospital_address: form.elements.hospital_address.value.trim(),
         city: form.elements.city.value.trim(),
-        state: "Karnataka",
+        state: document.getElementById("contactTargetState").value ||
+          document.getElementById("searchState").value.trim() || dashboardUser.state || "Karnataka",
         district: form.elements.district.value.trim(),
         contact_phone: form.elements.contact_phone.value.trim(),
         needed_at: neededAt.toISOString(),
@@ -880,6 +950,9 @@ async function submitPatientEmergencyRequest(event) {
       : result.donor_notifications_requested
         ? `Request ${requestId} saved successfully. Status: Pending Verification. No eligible, available, opted-in donors matched this request.`
         : `Request ${requestId} saved successfully. Status: Pending Verification. Donor notifications were not requested.`;
+    document.getElementById("targetDonorUserId").value = "";
+    document.getElementById("contactTargetState").value = "";
+    document.getElementById("contactTargetSummary").hidden = true;
     const bankMatches = result.matching_blood_banks || [];
     if (bankMatches.length) {
       const container = document.getElementById("requestMatchingBanks");
@@ -989,6 +1062,16 @@ async function loadDashboard() {
       document.getElementById("patientResponsesCard").hidden = false;
       await loadPatientResponses();
       await loadPatientRequestStatuses();
+      if (new URLSearchParams(window.location.search).get("open") === "request") {
+        const requestCard = document.getElementById("patientRequestCard");
+        requestCard.hidden = false;
+        document.getElementById("welcome").textContent =
+          `Welcome, ${user.full_name}. Complete the emergency request form below.`;
+        window.requestAnimationFrame(() => {
+          requestCard.scrollIntoView({ block: "start", behavior: "smooth" });
+          document.getElementById("requestHospitalName").focus({ preventScroll: true });
+        });
+      }
       window.setInterval(loadPatientResponses, 30000);
       window.setInterval(loadPatientRequestStatuses, 30000);
       window.setInterval(() => {
@@ -1052,15 +1135,40 @@ document.getElementById("logout-button").addEventListener("click", async () => {
 });
 
 document.getElementById("availabilityToggle")?.addEventListener("click", () => {
-  const enableAvailability = !donorAvailabilityIntent;
-  const mode = enableAvailability
-    ? document.getElementById("availabilityMode").value
-    : "unavailable";
-  saveDonorAvailability(
-    enableAvailability ? "available" : "not_available",
-    { mode }
-  );
+  availabilityDialogAction = "activate";
+  const startsAt = document.getElementById("availabilityStartDate").value;
+  const endsAt = document.getElementById("availabilityEndDate").value;
+  const hasUsableSavedWindow = startsAt && endsAt &&
+    Date.parse(`${startsAt}T${document.getElementById("availabilityStartTime").value}`) > Date.now() &&
+    Date.parse(`${endsAt}T${document.getElementById("availabilityEndTime").value}`) >
+      Date.parse(`${startsAt}T${document.getElementById("availabilityStartTime").value}`);
+  if (document.getElementById("availabilityMode").value === "general" && !hasUsableSavedWindow) {
+    initializeAvailabilityWindow();
+  }
+  document.getElementById("availabilityWindowMessage").textContent = "";
+  document.getElementById("availabilityDialog").showModal();
 });
+
+function openUnavailabilityDialog() {
+  document.getElementById("unavailabilityMessage").textContent = "";
+  document.getElementById("unavailabilityForm").reset();
+  const dialog = document.getElementById("unavailabilityDialog");
+  const reason = document.querySelector(
+    `input[name="unavailabilityReason"][value="${document.getElementById("availabilityStatus").dataset.reason || ""}"]`
+  );
+  if (reason) reason.checked = true;
+  document.getElementById("reportedDonationDateField").hidden =
+    Boolean(verifiedDonationDate) || Boolean(pendingDonationReport);
+  document.getElementById("verifiedDonationDateMessage").hidden =
+    !verifiedDonationDate || Boolean(pendingDonationReport);
+  if (pendingDonationReport) {
+    document.getElementById("unavailabilityMessage").textContent =
+      `Your reported donation date (${pendingDonationReport.donation_date}) is awaiting authorized verification.`;
+  }
+  dialog.showModal();
+}
+
+document.getElementById("notAvailableButton")?.addEventListener("click", openUnavailabilityDialog);
 
 document.getElementById("temporarilyUnavailable")?.addEventListener("click", () => {
   saveDonorAvailability("temporarily_unavailable");
@@ -1068,6 +1176,7 @@ document.getElementById("temporarilyUnavailable")?.addEventListener("click", () 
 
 document.getElementById("updateAvailabilityButton")?.addEventListener("click", () => {
   const dialog = document.getElementById("availabilityDialog");
+  availabilityDialogAction = "update";
   if (!document.getElementById("availabilityStartDate").value) initializeAvailabilityWindow();
   const now = new Date();
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
@@ -1092,7 +1201,7 @@ document.getElementById("availabilityWindowForm")?.addEventListener("submit", as
   if (!form.reportValidity()) return;
   const message = document.getElementById("availabilityWindowMessage");
   const { startsAt, endsAt } = readAvailabilityWindowInputs();
-  if (!startsAt || !endsAt || Date.parse(startsAt) < Date.now() ||
+  if (!startsAt || !endsAt || Date.parse(startsAt) <= Date.now() ||
       Date.parse(endsAt) <= Date.parse(startsAt) ||
       Date.parse(endsAt) - Date.parse(startsAt) > 366 * 24 * 60 * 60 * 1000) {
     message.textContent = "Choose a future start and a later end time within 366 days.";
@@ -1100,11 +1209,68 @@ document.getElementById("availabilityWindowForm")?.addEventListener("submit", as
   }
   document.getElementById("availabilityMode").value = "general";
   renderAvailabilityDates();
-  const saved = await saveDonorAvailability(
-    donorAvailabilityIntent ? "available" : "not_available",
-    { mode: "general", includeWindow: true }
-  );
+  const mode = "general";
+  const statusToSave = availabilityDialogAction === "activate" || donorAvailabilityIntent
+    ? "available"
+    : "not_available";
+  const saved = await saveDonorAvailability(statusToSave, {
+    mode,
+    includeWindow: mode === "general"
+  });
   if (saved) document.getElementById("availabilityDialog").close();
+});
+
+document.querySelectorAll('input[name="unavailabilityReason"]').forEach(input => {
+  input.addEventListener("change", event => {
+    const isDonationReason = event.currentTarget.value === "recently_donated";
+    document.getElementById("reportedDonationDateField").hidden =
+      !isDonationReason || Boolean(verifiedDonationDate) || Boolean(pendingDonationReport);
+  });
+});
+
+document.getElementById("cancelUnavailability")?.addEventListener("click", () => {
+  document.getElementById("unavailabilityDialog").close();
+});
+
+document.getElementById("unavailabilityForm")?.addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (!form.reportValidity()) return;
+  const reason = form.elements.unavailabilityReason.value;
+  const donationDateInput = document.getElementById("reportedDonationDate");
+  const reportedDonationDate = reason === "recently_donated" && !verifiedDonationDate && !pendingDonationReport
+    ? donationDateInput.value
+    : "";
+  if (reason === "recently_donated" && !verifiedDonationDate && !pendingDonationReport &&
+      !reportedDonationDate) {
+    donationDateInput.setCustomValidity("Enter the last donation date so authorized staff can verify it.");
+    form.reportValidity();
+    donationDateInput.setCustomValidity("");
+    return;
+  }
+  const expectedDate = document.getElementById("expectedAvailableDate").value;
+  const expectedTime = document.getElementById("expectedAvailableTime").value;
+  if (Boolean(expectedDate) !== Boolean(expectedTime)) {
+    document.getElementById("unavailabilityMessage").textContent =
+      "Enter both the expected available-from date and time, or leave both empty.";
+    return;
+  }
+  let expectedAvailableAt = null;
+  if (expectedDate && expectedTime) {
+    expectedAvailableAt = toUtcIsoDateTime(`${expectedDate}T${expectedTime}`);
+    if (!expectedAvailableAt || Date.parse(expectedAvailableAt) <= Date.now()) {
+      document.getElementById("unavailabilityMessage").textContent =
+        "Expected available-from date and time must be in the future.";
+      return;
+    }
+  }
+  const saved = await saveDonorAvailability("not_available", {
+    mode: "unavailable",
+    unavailabilityReason: reason,
+    expectedAvailableAt,
+    reportedDonationDate
+  });
+  if (saved) document.getElementById("unavailabilityDialog").close();
 });
 
 window.addEventListener("storage", event => {
@@ -1117,29 +1283,41 @@ window.addEventListener("storage", event => {
 });
 
 document.getElementById("availabilityMode")?.addEventListener("change", renderAvailabilityDates);
-document.getElementById("addAvailabilityDate")?.addEventListener("click", () => {
+function addSelectedAvailabilityDate({ allowDuplicate = false } = {}) {
   const input = document.getElementById("availabilityDate");
   const date = input.value;
-  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   if (!date || date <= today) {
     document.getElementById("availabilityMessage").textContent =
       "Choose a date after today.";
-    return;
+    return false;
   }
   if (selectedAvailabilityDates.some(item => item.date === date)) {
     document.getElementById("availabilityMessage").textContent =
       "That date is already in your list.";
-    return;
+    if (!allowDuplicate) return false;
+  } else {
+    selectedAvailabilityDates.push({ date, status: "available" });
   }
-  selectedAvailabilityDates.push({ date, status: "available" });
   input.value = "";
   document.getElementById("availabilityMessage").textContent =
-    "Date added. Save your selected dates to update your availability.";
+    allowDuplicate
+      ? "Saving your selected dates…"
+      : "Date added. Save your selected dates to update your availability.";
   renderAvailabilityDates();
+  return true;
+}
+
+document.getElementById("addAvailabilityDate")?.addEventListener("click", () => {
+  addSelectedAvailabilityDate();
 });
 
 document.getElementById("saveAvailabilityDates")?.addEventListener("click", () => {
-  saveDonorAvailability("available");
+  const dateInput = document.getElementById("availabilityDate");
+  if (dateInput.value && !addSelectedAvailabilityDate({ allowDuplicate: true })) return;
+  const hasAvailableDate = selectedAvailabilityDates.some(item => item.status === "available");
+  saveDonorAvailability(hasAvailableDate ? "available" : "not_available");
 });
 
 loadDashboard();

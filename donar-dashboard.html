@@ -40,6 +40,10 @@
     .availability-toggle .toggle-icon { margin-right: 7px; font-size: 18px; }
     .availability-current { margin: 0; font-weight: 750; }
     dialog { width: min(520px, calc(100% - 28px)); max-height: 90vh; overflow: auto; padding: 22px; border: 1px solid var(--line); border-radius: 16px; color: var(--ink); box-shadow: 0 18px 60px #10182840; }
+    dialog h2 { margin-bottom: 8px; }
+    .reason-options { display: grid; gap: 8px; margin: 14px 0; padding: 0; border: 0; }
+    .reason-option { display: flex; align-items: flex-start; gap: 9px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; cursor: pointer; }
+    .reason-option input { flex: 0 0 18px; width: 18px; height: 18px; min-height: 18px; margin: 3px 0 0; accent-color: var(--red); }
     dialog::backdrop { background: #18202d80; }
     .dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 16px; }
     .consent { display: flex; align-items: flex-start; gap: 10px; margin: 14px 0; color: #474d58; font-size: 13px; }
@@ -108,7 +112,8 @@
         <div><strong>Last confirmed</strong><br><time class="muted" id="lastConfirmedAt">Not confirmed yet</time></div>
       </div>
       <div class="availability-controls">
-        <button id="availabilityToggle" class="availability-toggle" type="button" aria-pressed="false"><span class="toggle-icon" aria-hidden="true">×</span><span class="toggle-label">Not Available</span></button>
+        <button id="availabilityToggle" class="availability-toggle" type="button" aria-pressed="false"><span class="toggle-icon" aria-hidden="true">✓</span><span class="toggle-label">Available</span></button>
+        <button id="notAvailableButton" class="button-secondary" type="button">Not Available</button>
         <button id="updateAvailabilityButton" class="button-secondary" type="button">Update Availability</button>
         <button id="temporarilyUnavailable" class="button-secondary" type="button">Temporarily Unavailable</button>
       </div>
@@ -132,7 +137,7 @@
           </div>
           <div id="availabilityDateList" aria-live="polite"></div>
           <button id="saveAvailabilityDates" type="button">Save selected dates</button>
-          <p class="muted">Add or update your future dates, then save. Each selected date is saved separately; a date does not mean you are available on other dates. Saved dates appear in the Admin Dashboard.</p>
+          <p class="muted">Choose a future date and click Add date, or type a date and click Save selected dates to add and save it in one step. Each selected date is saved separately; a date does not mean you are available on other dates. Saved dates appear in the Admin Dashboard.</p>
         </div>
         <label class="consent"><input id="publicContactConsent" type="checkbox"><span>Allow my confirmed blood group and registered city/state to appear in patient Live Donor Search. This must be enabled for patients to find me.</span></label>
         <label class="consent"><input id="publicIdentityConsent" type="checkbox"><span>Also show my registered name and saved area/locality in matching results. Location comes from my profile, not live GPS. If I have not saved an area, patients see that it was not provided. My phone, email, and exact address stay private unless I accept a specific request and separately consent to sharing my contact details.</span></label>
@@ -142,10 +147,40 @@
       </div>
     </section>
 
+    <dialog id="unavailabilityDialog" aria-labelledby="unavailabilityDialogTitle">
+      <form id="unavailabilityForm">
+        <h2 id="unavailabilityDialogTitle">Update Your Availability</h2>
+        <p class="muted">Choose why you are currently unavailable. Your selection is saved privately with your donor record.</p>
+        <fieldset class="reason-options">
+          <legend class="field"><strong>Reason</strong></legend>
+          <label class="reason-option"><input type="radio" name="unavailabilityReason" value="recently_donated" required><span>🩸 Recently donated blood</span></label>
+          <label class="reason-option"><input type="radio" name="unavailabilityReason" value="health_reasons" required><span>🏥 Health reasons</span></label>
+          <label class="reason-option"><input type="radio" name="unavailabilityReason" value="work_studies" required><span>💼 Busy with work or studies</span></label>
+          <label class="reason-option"><input type="radio" name="unavailabilityReason" value="temporarily_unavailable" required><span>🚫 Temporarily unavailable</span></label>
+          <label class="reason-option"><input type="radio" name="unavailabilityReason" value="other" required><span>📅 Other reason</span></label>
+        </fieldset>
+        <div class="field" id="reportedDonationDateField" hidden>
+          <label for="reportedDonationDate">Last donation date (for verification)</label>
+          <input id="reportedDonationDate" type="date">
+          <p class="muted">This date will be sent for authorized verification. It will not be treated as verified until staff confirms it.</p>
+        </div>
+        <p class="muted" id="verifiedDonationDateMessage" hidden></p>
+        <div class="availability-window">
+          <div class="field"><label for="expectedAvailableDate">Expected available-from date (optional)</label><input id="expectedAvailableDate" type="date"></div>
+          <div class="field"><label for="expectedAvailableTime">Expected available-from time (optional)</label><input id="expectedAvailableTime" type="time"></div>
+        </div>
+        <p class="message" id="unavailabilityMessage" aria-live="polite"></p>
+        <div class="dialog-actions">
+          <button class="button-secondary" id="cancelUnavailability" type="button">Cancel</button>
+          <button id="confirmNotAvailable" type="submit">Confirm Not Available</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="availabilityDialog" aria-labelledby="availabilityDialogTitle">
       <form id="availabilityWindowForm">
         <h2 id="availabilityDialogTitle">Update Availability</h2>
-        <p class="muted">Choose when your availability starts and ends. Your local times are converted to UTC for storage. Saving dates while unavailable does not turn availability on.</p>
+        <p class="muted">Choose when your availability starts and ends. Your local times are converted to UTC for storage. You will not appear in searches unless you also meet the donation and medical eligibility requirements.</p>
         <div class="availability-window">
           <div class="field"><label for="availabilityStartDate">Start date</label><input id="availabilityStartDate" type="date" required></div>
           <div class="field"><label for="availabilityStartTime">Start time</label><input id="availabilityStartTime" type="time" required></div>

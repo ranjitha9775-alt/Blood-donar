@@ -99,7 +99,11 @@
         <h3>Manage your donor availability</h3>
         <p>Manage whether patients can find you while your confirmation is current. You can turn this off at any time.</p>
         <label class="consent-label"><input id="donorAvailabilityConsent" name="consent" type="checkbox"><span>I am currently available and consent to showing my blood group and registered city/state in patient search. To appear by name and area, enable both Live Search options in My Donation Availability in the Donor Portal. Location uses profile details, not live GPS; phone and email remain private.</span></label>
-        <p class="help">Each Available confirmation lasts 24 hours and must be reconfirmed to renew.</p>
+        <div class="availability-window" id="quickAvailabilityWindow" hidden>
+          <div class="field"><label for="quickAvailabilityStart">Available from</label><input id="quickAvailabilityStart" type="datetime-local"></div>
+          <div class="field"><label for="quickAvailabilityEnd">Available until</label><input id="quickAvailabilityEnd" type="datetime-local"></div>
+        </div>
+        <p class="help">Enter a future start and end time before confirming availability. Times are stored in UTC; a confirmation expires at the selected end time.</p>
         <div class="availability-actions">
           <button class="btn btn-primary" type="submit">Update availability</button>
           <p class="availability-status" id="donorAvailabilityMessage" aria-live="polite"></p>

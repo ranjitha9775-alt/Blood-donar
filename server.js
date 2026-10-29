@@ -18,6 +18,8 @@ const { canAccessBloodBankPortal } = require('./authorization-utils');
 const {
   isAvailabilitySearchEligible,
   isValidAvailabilityConfirmationHours,
+  isValidUnavailabilityReason,
+  parseExpectedAvailability,
   parseAvailabilityWindow,
   normalizeAvailabilityState
 } = require('./availability-utils');
@@ -283,6 +285,47 @@ app.get('/assets/blood-donation-hero.jpg', (req, res) => {
 
 function isNonEmptyString(value, maxLength) {
   return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= maxLength;
+}
+
+function normalizeLocationName(value) {
+  return typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
+}
+
+function normalizedLocationSql(column) {
+  let expression = column;
+  for (let pass = 0; pass < 8; pass += 1) {
+    expression = `REPLACE(${expression}, '  ', ' ')`;
+  }
+  return `LOWER(TRIM(${expression}))`;
+}
+
+function createDonorContactToken(donorUserId, patientUserId) {
+  const payload = Buffer.from(JSON.stringify({
+    donorUserId: String(donorUserId),
+    patientUserId: String(patientUserId),
+    expiresAt: Date.now() + 10 * 60 * 1000
+  })).toString('base64url');
+  const signature = crypto.createHmac('sha256', signingSecret).update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+function getDonorContactTokenUserId(token, patientUserId) {
+  if (typeof token !== 'string' || token.length > 512) return null;
+  const [payload, signature] = token.split('.');
+  if (!payload || !signature) return null;
+  const expected = crypto.createHmac('sha256', signingSecret).update(payload).digest();
+  const actual = Buffer.from(signature, 'base64url');
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return null;
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    return typeof data.donorUserId === 'string' && /^[1-9]\d{0,19}$/.test(data.donorUserId) &&
+      data.patientUserId === String(patientUserId) &&
+      Number.isSafeInteger(data.expiresAt) && data.expiresAt > Date.now()
+      ? data.donorUserId
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function normalizeBloodGroup(value) {
@@ -718,13 +761,21 @@ async function syncBloodStockAlerts() {
 }
 
 async function initializeDonationCoordinationSchema(userIdType) {
-  await ensureColumn('donors', 'next_eligible_date', 'DATE NULL AFTER last_donation_date');
+  await ensureColumn('donors', 'last_donation_date', 'DATE NULL');
+  await ensureColumn('donors', 'next_eligible_date', 'DATE NULL');
+  await ensureColumn('donors', 'availability_unavailable_reason', 'VARCHAR(32) NULL AFTER availability_status');
+  await ensureColumn('donors', 'availability_return_at', 'DATETIME NULL AFTER availability_unavailable_reason');
   await ensureColumn('donor_health_screenings', 'health_data_consent_at', 'DATETIME NULL AFTER review_notes');
   await ensureColumn('donor_health_screenings', 'form_version', 'VARCHAR(20) NULL AFTER health_data_consent_at');
   await ensureColumn('blood_requests', 'component', "ENUM('whole_blood', 'red_cells', 'platelets', 'plasma') NOT NULL DEFAULT 'whole_blood' AFTER blood_group");
   await ensureColumn('blood_requests', 'coordination_status', "ENUM('Pending', 'Under Review', 'Accepted', 'Rejected', 'In Progress', 'Fulfilled', 'Cancelled') NOT NULL DEFAULT 'Pending' AFTER status");
   await ensureColumn('blood_requests', 'selected_donor_user_id', `${userIdType} NULL AFTER coordination_status`);
   await ensureColumn('blood_requests', 'selected_donor_confirmed_at', 'DATETIME NULL AFTER selected_donor_user_id');
+  await ensureColumn('blood_requests', 'target_donor_user_id', `${userIdType} NULL AFTER selected_donor_confirmed_at`);
+  const [requestIndexes] = await db.query('SHOW INDEX FROM blood_requests');
+  if (!requestIndexes.some(index => index.Key_name === 'idx_blood_requests_target_donor')) {
+    await db.query('CREATE INDEX idx_blood_requests_target_donor ON blood_requests (target_donor_user_id)');
+  }
   await db.query(
     `ALTER TABLE blood_requests MODIFY COLUMN coordination_status
      ENUM('Pending', 'Under Review', 'Accepted', 'Rejected', 'In Progress', 'Fulfilled', 'Cancelled')
@@ -804,6 +855,25 @@ async function initializeDonationCoordinationSchema(userIdType) {
       CONSTRAINT fk_donation_correction_donor FOREIGN KEY (donor_user_id)
         REFERENCES users (user_id) ON DELETE RESTRICT,
       CONSTRAINT fk_donation_correction_admin FOREIGN KEY (corrected_by_admin_id)
+        REFERENCES admin_users (admin_id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await db.query(
+    `CREATE TABLE IF NOT EXISTS donor_reported_donations (
+      report_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      donor_user_id ${userIdType} NOT NULL,
+      donation_date DATE NOT NULL,
+      report_status ENUM('pending', 'verified', 'rejected') NOT NULL DEFAULT 'pending',
+      reported_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      reviewed_by_admin_id TINYINT UNSIGNED NULL,
+      reviewed_at DATETIME NULL,
+      review_note VARCHAR(500) NULL,
+      PRIMARY KEY (report_id),
+      KEY idx_reported_donations_status (report_status, reported_at),
+      KEY idx_reported_donations_donor (donor_user_id, report_status),
+      CONSTRAINT fk_reported_donations_donor FOREIGN KEY (donor_user_id)
+        REFERENCES users (user_id) ON DELETE RESTRICT,
+      CONSTRAINT fk_reported_donations_admin FOREIGN KEY (reviewed_by_admin_id)
         REFERENCES admin_users (admin_id) ON DELETE RESTRICT
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
   );
@@ -1148,6 +1218,8 @@ async function initializePortalSchemaCompatibility() {
   ]) {
     await ensureColumn('donors', name, definition);
   }
+  await ensureColumn('donors', 'last_donation_date', 'DATE NULL');
+  await ensureColumn('donors', 'next_eligible_date', 'DATE NULL');
   await ensureTemporaryUnavailableStatus();
   await db.execute(
     `UPDATE donors
@@ -1703,9 +1775,13 @@ app.post('/api/blood-requests', rateLimit(5, 15 * 60 * 1000), requireDatabase, r
   const hospitalDetails = req.body?.hospital_name
     ? [hospitalName, hospitalAddress].filter(Boolean).join(' — ')
     : hospitalName;
-  const city = typeof req.body?.city === 'string' ? req.body.city.trim() : '';
-  const state = typeof req.body?.state === 'string' ? req.body.state.trim() : req.user.state;
+  const city = normalizeLocationName(req.body?.city);
+  const state = normalizeLocationName(typeof req.body?.state === 'string' ? req.body.state : req.user.state);
   const district = typeof req.body?.district === 'string' ? req.body.district.trim() : '';
+  const targetDonorToken = req.body?.target_donor_token;
+  const targetDonorUserId = targetDonorToken == null || targetDonorToken === ''
+    ? null
+    : getDonorContactTokenUserId(targetDonorToken, req.user.user_id);
   const contactName = typeof req.body?.contact_name === 'string' && req.body.contact_name.trim()
     ? req.body.contact_name.trim()
     : req.user.full_name;
@@ -1736,6 +1812,7 @@ app.post('/api/blood-requests', rateLimit(5, 15 * 60 * 1000), requireDatabase, r
       !isNonEmptyString(city, 80) ||
       !isNonEmptyString(state, 80) ||
       !isNonEmptyString(district, 80) ||
+      (targetDonorToken != null && targetDonorToken !== '' && !targetDonorUserId) ||
       !isNonEmptyString(contactName, 100) ||
       !PHONE_PATTERN.test(contactPhone) || phoneDigits.length < 7 ||
       !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(neededAt) ||
@@ -1753,6 +1830,45 @@ app.post('/api/blood-requests', rateLimit(5, 15 * 60 * 1000), requireDatabase, r
     const sqlNeededAt = new Date(neededAtTimestamp).toISOString().slice(0, 19).replace('T', ' ');
     connection = await db.getConnection();
     await connection.beginTransaction();
+    if (targetDonorUserId) {
+      const compatibleBloodGroups = getCompatibleDonorBloodGroups(bloodGroup);
+      const [[targetDonor]] = await connection.execute(
+        `SELECT d.user_id
+         FROM donors d
+         JOIN users u ON u.user_id = d.user_id AND u.role = 'donor'
+         WHERE d.user_id = ?
+           AND d.available = 1
+           AND d.last_confirmed_at IS NOT NULL
+           AND d.public_contact_consent = 1
+           AND d.emergency_response_consent = 1
+           AND ${DONOR_ELIGIBILITY_SQL}
+           AND d.blood_group IN (${compatibleBloodGroups.map(() => '?').join(', ')})
+           AND ${normalizedLocationSql('d.city')} = LOWER(?)
+           AND ${normalizedLocationSql('d.state')} = LOWER(?)
+           AND (
+             (COALESCE(d.availability_mode, 'general') = 'general'
+               AND COALESCE(d.availability_starts_at, d.last_confirmed_at) <= UTC_TIMESTAMP()
+               AND d.availability_expires_at > UTC_TIMESTAMP())
+             OR
+             (COALESCE(d.availability_mode, 'general') = 'selected_dates'
+               AND EXISTS (
+                 SELECT 1 FROM donor_availability_dates ad
+                 WHERE ad.donor_user_id = d.user_id
+                   AND ad.available_date = DATE(?)
+                   AND ad.status = 'available'
+               ))
+           )
+         LIMIT 1
+         FOR UPDATE`,
+        [targetDonorUserId, ...compatibleBloodGroups, city, state, sqlNeededAt]
+      );
+      if (!targetDonor) {
+        await connection.rollback();
+        return res.status(409).json({
+          message: 'This donor is no longer available for a contact request. Refresh Live Donor Search and try again.'
+        });
+      }
+    }
     const requestValues = [
         req.user.user_id,
         patientReference,
@@ -1767,7 +1883,8 @@ app.post('/api/blood-requests', rateLimit(5, 15 * 60 * 1000), requireDatabase, r
         district,
         contactName,
         contactPhone,
-        sqlNeededAt
+        sqlNeededAt,
+        targetDonorUserId
       ];
     const [result] = PORTAL_SCHEMA
       ? await connection.execute(
@@ -1775,8 +1892,8 @@ app.post('/api/blood-requests', rateLimit(5, 15 * 60 * 1000), requireDatabase, r
             (requester_user_id, patient_name, blood_group, component, units_needed, hospital_name,
             hospital_address, contact_phone, urgency, needed_by, status,
             user_id, patient_reference, units, hospital_details, city, state, district,
-            contact_name, needed_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            contact_name, needed_at, target_donor_user_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           req.user.user_id,
           patientReference,
@@ -1797,14 +1914,15 @@ app.post('/api/blood-requests', rateLimit(5, 15 * 60 * 1000), requireDatabase, r
           state,
           district,
           contactName,
-          sqlNeededAt
+          sqlNeededAt,
+          targetDonorUserId
         ]
       )
       : await connection.execute(
         `INSERT INTO blood_requests
            (user_id, patient_reference, blood_group, component, units, urgency, hospital_details, hospital_name,
-            city, state, district, contact_name, contact_phone, needed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            city, state, district, contact_name, contact_phone, needed_at, target_donor_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         requestValues
       );
     createdRequestId = Number(result.insertId);
@@ -1843,13 +1961,13 @@ app.post('/api/blood-requests', rateLimit(5, 15 * 60 * 1000), requireDatabase, r
                ))
            )
            AND d.blood_group IN (${getCompatibleDonorBloodGroups(bloodGroup).map(() => '?').join(', ')})
-           AND LOWER(d.city) = LOWER(?)
-           AND LOWER(d.state) = LOWER(?)
-           AND (LOWER(r.district) = LOWER(r.city)
-             OR LOWER(COALESCE(NULLIF(d.place, ''), NULLIF(matched_user.place, ''), '')) = LOWER(r.district))
+           AND ${normalizedLocationSql('d.city')} = LOWER(?)
+           AND ${normalizedLocationSql('d.state')} = LOWER(?)
+           AND (? IS NULL OR d.user_id = ?)
            AND d.user_id <> ?`,
         [result.insertId, responseDeadline, sqlNeededAt,
-          ...getCompatibleDonorBloodGroups(bloodGroup), city, state, req.user.user_id]
+          ...getCompatibleDonorBloodGroups(bloodGroup), city, state,
+          targetDonorUserId, targetDonorUserId, req.user.user_id]
       );
       matchedDonorCount = matches.affectedRows;
     }
@@ -1876,7 +1994,6 @@ app.post('/api/blood-requests', rateLimit(5, 15 * 60 * 1000), requireDatabase, r
        SELECT dr.donor_user_id, 'Relevant emergency blood request',
               CONCAT('Request LD-', r.request_id, ': ', r.blood_group, ' blood is needed at ',
                      COALESCE(NULLIF(r.hospital_name, ''), 'a hospital'), ' in ', r.city,
-                     CASE WHEN COALESCE(r.district, '') = '' THEN '' ELSE CONCAT(', ', r.district) END,
                      '. Sign in to review the request. Patient name, phone, and address are not shared.'),
               'emergency_request', r.request_id,
               CONCAT('emergency-request:', r.request_id), UTC_TIMESTAMP()
@@ -2256,7 +2373,7 @@ app.post('/api/blood-bank/emergency-requests/:requestId/status', requireDatabase
 
 async function notifyAdditionalMatchingDonors(requestId) {
   const [[request]] = await db.execute(
-    'SELECT blood_group FROM blood_requests WHERE request_id = ? LIMIT 1',
+    'SELECT blood_group, target_donor_user_id FROM blood_requests WHERE request_id = ? LIMIT 1',
     [requestId]
   );
   if (!request) return 0;
@@ -2287,10 +2404,9 @@ async function notifyAdditionalMatchingDonors(requestId) {
        AND d.last_confirmed_at IS NOT NULL
        AND d.emergency_response_consent = 1
       AND ${DONOR_ELIGIBILITY_SQL}
-       AND LOWER(d.city) = LOWER(r.city)
-       AND LOWER(d.state) = LOWER(r.state)
-       AND (LOWER(r.district) = LOWER(r.city)
-         OR LOWER(COALESCE(NULLIF(d.place, ''), NULLIF(u.place, ''), '')) = LOWER(r.district))
+       AND ${normalizedLocationSql('d.city')} = ${normalizedLocationSql('r.city')}
+       AND ${normalizedLocationSql('d.state')} = ${normalizedLocationSql('r.state')}
+       AND (r.target_donor_user_id IS NULL OR r.target_donor_user_id = d.user_id)
        AND (
          (COALESCE(d.availability_mode, 'general') = 'general'
            AND COALESCE(d.availability_starts_at, d.last_confirmed_at) <= UTC_TIMESTAMP()
@@ -2317,8 +2433,10 @@ async function notifyAdditionalMatchingDonors(requestId) {
          (recipient_user_id, title, message, notification_type, related_request_id,
           dedupe_key, created_at)
        SELECT dr.donor_user_id, 'Relevant emergency blood request',
-              CONCAT('A request for ', r.blood_group, ' blood needs assistance in ',
-                     r.city, '. Sign in to review the details.'),
+              CONCAT('Request LD-', r.request_id, ': ', r.blood_group,
+                     ' blood is needed at ', COALESCE(NULLIF(r.hospital_name, ''), 'a hospital'),
+                     ' in ', r.city,
+                     '. Patient name, phone, and address are not shared.'),
               'emergency_request', r.request_id,
               CONCAT('emergency-request:', r.request_id), UTC_TIMESTAMP()
        FROM donor_request_responses dr
@@ -3881,7 +3999,7 @@ app.get('/api/admin/dashboard', requireDatabase, requireAdminConfigured, require
 
 app.get('/api/admin/donations', requireDatabase, requireAdminConfigured, requireAdmin, async (req, res) => {
   try {
-    const [[donors], [donations], [corrections]] = await Promise.all([
+    const [[donors], [donations], [corrections], [reportedDonations]] = await Promise.all([
       db.execute(
         `SELECT d.user_id AS donor_user_id, u.full_name, d.blood_group
          FROM donors d JOIN users u ON u.user_id = d.user_id AND u.role = 'donor'
@@ -3914,15 +4032,79 @@ app.get('/api/admin/donations', requireDatabase, requireAdminConfigured, require
          JOIN admin_users a ON a.admin_id = c.corrected_by_admin_id
          ORDER BY c.corrected_at DESC, c.correction_id DESC
          LIMIT 500`
+      ),
+      db.execute(
+        `SELECT r.report_id, r.donor_user_id, u.full_name, d.blood_group,
+                DATE_FORMAT(r.donation_date, '%Y-%m-%d') AS donation_date,
+                DATE_FORMAT(r.reported_at, '%Y-%m-%dT%H:%i:%sZ') AS reported_at
+         FROM donor_reported_donations r
+         JOIN users u ON u.user_id = r.donor_user_id AND u.role = 'donor'
+         JOIN donors d ON d.user_id = r.donor_user_id
+         WHERE r.report_status = 'pending'
+         ORDER BY r.reported_at, r.report_id
+         LIMIT 200`
       )
     ]);
     res.set('Cache-Control', 'no-store');
-    res.json({ donors, donations, corrections, eligibility_interval_months: DONATION_ELIGIBILITY_MONTHS });
+    res.json({
+      donors, donations, corrections, reported_donations: reportedDonations,
+      eligibility_interval_months: DONATION_ELIGIBILITY_MONTHS
+    });
   } catch (error) {
     console.error('Admin donation history lookup failed:', error.code || error.message);
     res.status(500).json({ message: 'Could not load donation history.' });
   }
 });
+
+app.patch('/api/admin/donation-reports/:reportId', requireDatabase, requireAdminConfigured,
+  requireAdmin, rateLimit(30, 60 * 60 * 1000), async (req, res) => {
+    const reportId = Number(req.params.reportId);
+    const decision = req.body?.decision;
+    const reviewNote = typeof req.body?.review_note === 'string'
+      ? req.body.review_note.trim()
+      : '';
+    if (!Number.isSafeInteger(reportId) || reportId < 1 ||
+        decision !== 'rejected' || reviewNote.length > 500) {
+      return res.status(400).json({ message: 'Choose a valid rejection decision and keep the note under 500 characters.' });
+    }
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[report]] = await connection.execute(
+        `SELECT report_id, donor_user_id, donation_date
+         FROM donor_reported_donations
+         WHERE report_id = ? AND report_status = 'pending'
+         FOR UPDATE`,
+        [reportId]
+      );
+      if (!report) {
+        await connection.rollback();
+        return res.status(404).json({ message: 'Pending donor-reported donation was not found.' });
+      }
+      await connection.execute(
+        `UPDATE donor_reported_donations
+         SET report_status = 'rejected', reviewed_by_admin_id = ?, reviewed_at = UTC_TIMESTAMP(),
+             review_note = ?
+         WHERE report_id = ?`,
+        [req.admin.admin_id, reviewNote || null, reportId]
+      );
+      await saveInAppNotification(connection, {
+        recipientUserId: report.donor_user_id,
+        title: 'Reported donation date reviewed',
+        message: 'An administrator reviewed your reported donation date. Check your availability and eligibility information.',
+        type: 'donation_report_review',
+        dedupeKey: `donation-report-rejected:${reportId}`
+      });
+      await connection.commit();
+      res.json({ message: 'The reported donation date was rejected. No verified donation history was added.' });
+    } catch (error) {
+      await connection.rollback().catch(() => {});
+      console.error('Donor-reported donation review failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not review the donor-reported donation.' });
+    } finally {
+      connection.release();
+    }
+  });
 
 app.patch('/api/admin/donations/:donationId', requireDatabase, requireAdminConfigured,
   requireAdmin, rateLimit(30, 60 * 60 * 1000), async (req, res) => {
@@ -4173,6 +4355,22 @@ app.post('/api/admin/donors/:donorId/donations', requireDatabase, requireAdminCo
          WHERE user_id = ?`,
         [donationDate, nextEligibleDate, donorId]
       );
+      const [verifiedReports] = await connection.execute(
+        `UPDATE donor_reported_donations
+         SET report_status = 'verified', reviewed_by_admin_id = ?, reviewed_at = UTC_TIMESTAMP(),
+             review_note = 'Verified against the administrator-recorded donation history.'
+         WHERE donor_user_id = ? AND donation_date = ? AND report_status = 'pending'`,
+        [req.admin.admin_id, donorId, donationDate]
+      );
+      if (verifiedReports.affectedRows) {
+        await saveInAppNotification(connection, {
+          recipientUserId: donorId,
+          title: 'Reported donation date verified',
+          message: `Your donation dated ${donationDate} was verified and recorded. Your eligibility review date is ${nextEligibleDate}.`,
+          type: 'donation_report_review',
+          dedupeKey: `donation-report-verified:${donorId}:${donationDate}`
+        });
+      }
       if (PORTAL_SCHEMA) {
         await connection.execute(
           `INSERT INTO donor_availability
@@ -4555,8 +4753,14 @@ app.get('/api/availability/status', requireDatabase, requireSession, async (req,
       `SELECT availability_status, availability_mode, available, public_contact_consent,
               public_identity_consent,
               emergency_response_consent,
-              DATE_FORMAT(COALESCE(next_eligible_date,
-                DATE_ADD(last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)),
+                availability_unavailable_reason,
+                DATE_FORMAT(availability_return_at, '%Y-%m-%dT%H:%i:%sZ') AS expected_available_at,
+                DATE_FORMAT(last_donation_date, '%Y-%m-%d') AS recorded_last_donation_date,
+                DATE_FORMAT((SELECT MAX(dh.donation_date) FROM donor_donation_history dh
+                  WHERE dh.donor_user_id = d.user_id AND dh.verification_status = 'verified'),
+                  '%Y-%m-%d') AS verified_last_donation_date,
+                DATE_FORMAT(COALESCE(next_eligible_date,
+                  DATE_ADD(last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)),
                 '%Y-%m-%d') AS next_eligible_date,
               (${DONOR_ELIGIBILITY_SQL}) AS eligible_for_matching,
               COALESCE(availability_starts_at, last_confirmed_at) <= UTC_TIMESTAMP()
@@ -4586,6 +4790,14 @@ app.get('/api/availability/status', requireDatabase, requireSession, async (req,
        ORDER BY available_date`,
       [req.user.user_id]
     );
+    const [pendingReports] = await db.execute(
+      `SELECT report_id, DATE_FORMAT(donation_date, '%Y-%m-%d') AS donation_date
+       FROM donor_reported_donations
+       WHERE donor_user_id = ? AND report_status = 'pending'
+       ORDER BY reported_at DESC, report_id DESC
+       LIMIT 1`,
+      [req.user.user_id]
+    );
     const hasCurrentSelectedDate = dates.some(date => date.status === 'available');
     const confirmed = Boolean(donors[0].last_confirmed_at);
     const active = donors[0].available === 1 && confirmed &&
@@ -4608,11 +4820,11 @@ app.get('/api/availability/status', requireDatabase, requireSession, async (req,
         donors[0].available === 0 &&
         donors[0].availability_status === 'not_available'
         ? 'Not Available'
-        : donors[0].availability_mode === 'selected_dates' && hasCurrentSelectedDate
-          ? 'Available'
         : donors[0].availability_mode === 'selected_dates' &&
           donors[0].has_expired_selected_dates && confirmed
           ? 'Expired'
+        : donors[0].availability_mode === 'selected_dates' && confirmed
+          ? 'Not Available'
         : 'Unconfirmed';
     res.json({
       status,
@@ -4621,6 +4833,11 @@ app.get('/api/availability/status', requireDatabase, requireSession, async (req,
       is_available: Boolean(active),
       eligible_for_matching: Boolean(donors[0].eligible_for_matching),
       next_eligible_date: donors[0].next_eligible_date,
+      recorded_last_donation_date: donors[0].recorded_last_donation_date,
+      verified_last_donation_date: donors[0].verified_last_donation_date,
+      pending_donation_report: pendingReports[0] || null,
+      unavailability_reason: donors[0].availability_unavailable_reason,
+      expected_available_at: donors[0].expected_available_at,
       availability_starts_at: donors[0].availability_starts_at,
       available_until: donors[0].available_until,
       last_confirmed_at: donors[0].last_confirmed_at,
@@ -4645,12 +4862,19 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
     expires_in_hours: expiresInHours = AVAILABILITY_HOURS,
     starts_at: submittedStartsAt,
     ends_at: submittedEndsAt,
+    unavailability_reason: unavailabilityReason,
+    expected_available_at: submittedExpectedAvailableAt,
+    reported_donation_date: submittedReportedDonationDate,
     mode: submittedMode = 'general',
     selected_dates: submittedDates } = req.body || {};
+  const parsedExpectedAvailableAt = submittedExpectedAvailableAt == null || submittedExpectedAvailableAt === ''
+    ? null
+    : parseExpectedAvailability(submittedExpectedAvailableAt);
   const status = normalizeAvailabilityState(submittedStatus);
   const mode = ['general', 'selected_dates', 'unavailable'].includes(submittedMode)
     ? submittedMode
     : '';
+  const isAvailable = status === 'available';
   const selectedDates = submittedDates === undefined ? [] : submittedDates;
   if (!status ||
       !mode ||
@@ -4660,31 +4884,33 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
       !isValidAvailabilityConfirmationHours(expiresInHours) ||
       !Array.isArray(selectedDates) ||
       selectedDates.length > 100 ||
-      (mode === 'selected_dates' && selectedDates.length === 0) ||
+      (mode === 'selected_dates' && isAvailable && selectedDates.length === 0) ||
       (mode !== 'selected_dates' && selectedDates.length > 0) ||
       (mode === 'unavailable' && !['not_available', 'temporarily_unavailable'].includes(status)) ||
-      (mode === 'selected_dates' && status !== 'available') ||
-      (mode === 'general' && !['available', 'not_available'].includes(status))) {
+      (mode === 'selected_dates' && !['available', 'not_available'].includes(status)) ||
+      (mode === 'general' && !['available', 'not_available'].includes(status)) ||
+      (status === 'not_available' && mode === 'unavailable' &&
+        !isValidUnavailabilityReason(unavailabilityReason)) ||
+      (unavailabilityReason !== undefined && !isValidUnavailabilityReason(unavailabilityReason)) ||
+      (status !== 'not_available' && unavailabilityReason !== undefined) ||
+      (submittedExpectedAvailableAt != null && submittedExpectedAvailableAt !== '' &&
+        !parsedExpectedAvailableAt) ||
+      (submittedReportedDonationDate !== undefined &&
+        (!isValidDateOnly(submittedReportedDonationDate) ||
+         submittedReportedDonationDate > new Date().toISOString().slice(0, 10) ||
+         unavailabilityReason !== 'recently_donated'))) {
     return res.status(400).json({ message: 'Choose a valid status and confirm your privacy choices. General availability must use a valid future start and end time.' });
   }
-  const isAvailable = status === 'available';
+  const preserveUnavailableDetails = status === 'not_available' &&
+    mode === 'general' && unavailabilityReason === undefined;
   const hasGeneralWindow = mode === 'general' &&
     (isAvailable || submittedStartsAt !== undefined || submittedEndsAt !== undefined);
   let availabilityWindow = null;
   if (hasGeneralWindow) {
-    if (submittedStartsAt === undefined && submittedEndsAt === undefined) {
-      const start = new Date();
-      const end = new Date(start.getTime() + AVAILABILITY_HOURS * 60 * 60 * 1000);
-      availabilityWindow = {
-        startsAt: start.toISOString().slice(0, 19).replace('T', ' '),
-        endsAt: end.toISOString().slice(0, 19).replace('T', ' ')
-      };
-    } else {
-      availabilityWindow = parseAvailabilityWindow(submittedStartsAt, submittedEndsAt);
-    }
+    availabilityWindow = parseAvailabilityWindow(submittedStartsAt, submittedEndsAt);
     if (!availabilityWindow) {
       return res.status(400).json({
-        message: 'Set a future start and later end time in UTC. The availability window cannot exceed 366 days.'
+        message: 'Enter a future availability start and a later end time. The availability window cannot exceed 366 days.'
       });
     }
   }
@@ -4699,18 +4925,106 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
     parsedDates.push({ date: item.date, status: item.status });
   }
   if (new Set(parsedDates.map(item => item.date)).size !== parsedDates.length ||
-      (mode === 'selected_dates' && !parsedDates.some(item => item.status === 'available'))) {
+      (isAvailable && mode === 'selected_dates' &&
+        !parsedDates.some(item => item.status === 'available'))) {
     return res.status(400).json({ message: 'Choose at least one unique future date as available.' });
   }
 
   try {
     const connection = await db.getConnection();
     let updatedDonor;
+    let updatedDates = [];
+    let donationReportStatus = null;
+    let reportedDonationDate = null;
     try {
       await connection.beginTransaction();
+      const [[donorBeforeUpdate]] = await connection.execute(
+        `SELECT d.user_id,
+                DATE_FORMAT(COALESCE(
+                  (SELECT MAX(dh.donation_date) FROM donor_donation_history dh
+                   WHERE dh.donor_user_id = d.user_id AND dh.verification_status = 'verified'),
+                  d.last_donation_date), '%Y-%m-%d') AS recorded_donation_date,
+                DATE_FORMAT(COALESCE(
+                  (SELECT MAX(dh.next_eligible_date) FROM donor_donation_history dh
+                   WHERE dh.donor_user_id = d.user_id AND dh.verification_status = 'verified'),
+                  d.next_eligible_date,
+                  DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)),
+                  '%Y-%m-%d') AS next_eligible_date,
+                COALESCE(
+                  (SELECT MAX(dh.next_eligible_date) FROM donor_donation_history dh
+                   WHERE dh.donor_user_id = d.user_id AND dh.verification_status = 'verified'),
+                  d.next_eligible_date,
+                  DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)) > UTC_DATE()
+                  AS in_cooldown
+         FROM donors d WHERE d.user_id = ? FOR UPDATE`,
+        [req.user.user_id]
+      );
+      if (!donorBeforeUpdate) {
+        await connection.rollback();
+        return res.status(404).json({ message: 'No donor profile is linked to this account.' });
+      }
+      const [[pendingReport]] = await connection.execute(
+        `SELECT report_id, donation_date FROM donor_reported_donations
+         WHERE donor_user_id = ? AND report_status = 'pending'
+         ORDER BY reported_at DESC, report_id DESC LIMIT 1 FOR UPDATE`,
+        [req.user.user_id]
+      );
+      if (isAvailable && pendingReport) {
+        await connection.rollback();
+        return res.status(409).json({
+          message: `Your reported donation date (${formatDatabaseDateOnly(pendingReport.donation_date)}) is awaiting authorized verification. Availability cannot be restored until staff reviews it.`
+        });
+      }
+      if (isAvailable && donorBeforeUpdate.in_cooldown) {
+        await connection.rollback();
+        return res.status(409).json({
+          message: `Your donation cooldown is active until ${donorBeforeUpdate.next_eligible_date}. You cannot confirm availability before that date.`
+        });
+      }
+      if (status === 'not_available' && unavailabilityReason === 'recently_donated') {
+        if (donorBeforeUpdate.recorded_donation_date) {
+          if (submittedReportedDonationDate &&
+              submittedReportedDonationDate !== donorBeforeUpdate.recorded_donation_date) {
+            await connection.rollback();
+            return res.status(400).json({
+              message: `The donation date on file is ${donorBeforeUpdate.recorded_donation_date}. Ask an administrator to correct it if needed.`
+            });
+          }
+        } else {
+          if (!submittedReportedDonationDate) {
+            await connection.rollback();
+            return res.status(400).json({
+              message: 'Enter the last donation date so authorized staff can verify it.'
+            });
+          }
+          if (pendingReport) {
+            await connection.rollback();
+            return res.status(409).json({
+              message: `Your previously reported donation date (${formatDatabaseDateOnly(pendingReport.donation_date)}) is still awaiting authorized verification.`
+            });
+          }
+          const [reportResult] = await connection.execute(
+            `INSERT INTO donor_reported_donations (donor_user_id, donation_date, report_status, reported_at)
+             VALUES (?, ?, 'pending', UTC_TIMESTAMP())`,
+            [req.user.user_id, submittedReportedDonationDate]
+          );
+          await saveAdminNotifications(connection, {
+            title: 'Donor-reported donation needs verification',
+            message: `A donor submitted a donation date for verification (report ${reportResult.insertId}).`,
+            type: 'donation_report',
+            dedupeKey: `donation-report:${reportResult.insertId}`
+          });
+          donationReportStatus = 'pending';
+          reportedDonationDate = submittedReportedDonationDate;
+        }
+      }
       await connection.execute(
       `UPDATE donors
        SET availability_status = ?, availability_mode = ?, available = ?, is_available = ?,
+           availability_unavailable_reason = CASE WHEN ? = 1
+             THEN availability_unavailable_reason ELSE ? END,
+           availability_return_at = CASE WHEN ? = 1
+             THEN availability_return_at ELSE ? END,
            public_contact_consent = ?,
            public_identity_consent = CASE WHEN ? IS NULL THEN public_identity_consent ELSE ? END,
            emergency_response_consent = ?,
@@ -4722,6 +5036,10 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
            last_confirmed_at = UTC_TIMESTAMP()
        WHERE user_id = ?`,
         [status, mode, isAvailable ? 1 : 0, isAvailable ? 1 : 0,
+           preserveUnavailableDetails ? 1 : 0,
+           status === 'not_available' ? unavailabilityReason : null,
+           preserveUnavailableDetails ? 1 : 0,
+           status === 'not_available' ? parsedExpectedAvailableAt : null,
           isAvailable && publicContactConsent ? 1 : 0,
           publicIdentityConsent === undefined ? null : 1,
           isAvailable && publicContactConsent && publicIdentityConsent ? 1 : 0,
@@ -4803,8 +5121,8 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
               DATE_FORMAT(availability_starts_at, '%Y-%m-%dT%H:%i:%sZ') AS availability_starts_at,
               DATE_FORMAT(availability_expires_at, '%Y-%m-%dT%H:%i:%sZ') AS available_until,
               DATE_FORMAT(last_confirmed_at, '%Y-%m-%dT%H:%i:%sZ') AS last_confirmed_at
-       FROM donors
-       WHERE user_id = ?
+       FROM donors d
+       WHERE d.user_id = ?
        LIMIT 1`,
         [req.user.user_id]
       );
@@ -4827,6 +5145,14 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
         type: 'availability_changed',
         dedupeKey: `availability-change:${req.user.user_id}:${crypto.randomUUID()}`
       });
+      const [dates] = await connection.execute(
+        `SELECT DATE_FORMAT(available_date, '%Y-%m-%d') AS date, status
+         FROM donor_availability_dates
+         WHERE donor_user_id = ? AND available_date >= UTC_DATE()
+         ORDER BY available_date`,
+        [req.user.user_id]
+      );
+      updatedDates = dates;
       await connection.commit();
     } catch (error) {
       await connection.rollback();
@@ -4834,13 +5160,6 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
     } finally {
       connection.release();
     }
-    const [dates] = await db.execute(
-      `SELECT DATE_FORMAT(available_date, '%Y-%m-%d') AS date, status
-       FROM donor_availability_dates
-       WHERE donor_user_id = ? AND available_date >= UTC_DATE()
-       ORDER BY available_date`,
-      [req.user.user_id]
-    );
     const responseStatus = status === 'temporarily_unavailable'
       ? 'Temporarily Unavailable'
       : !isAvailable
@@ -4856,16 +5175,18 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
       availability_mode: updatedDonor.availability_mode,
       is_available: updatedDonor.available === 1 &&
         (mode === 'selected_dates'
-          ? dates.some(date => date.status === 'available')
+          ? updatedDates.some(date => date.status === 'available')
           : Date.parse(updatedDonor.availability_starts_at || updatedDonor.last_confirmed_at) <= Date.now() &&
             Date.parse(updatedDonor.available_until || '') > Date.now()),
       availability_starts_at: updatedDonor.availability_starts_at,
       available_until: updatedDonor.available_until,
       last_confirmed_at: updatedDonor.last_confirmed_at,
-      selected_dates: dates,
+      selected_dates: updatedDates,
       public_contact_consent: updatedDonor.public_contact_consent === 1,
       public_identity_consent: updatedDonor.public_identity_consent === 1,
-      emergency_response_consent: updatedDonor.emergency_response_consent === 1
+      emergency_response_consent: updatedDonor.emergency_response_consent === 1,
+      donation_report_status: donationReportStatus,
+      reported_donation_date: reportedDonationDate
     });
   } catch (error) {
     console.error(
@@ -4873,7 +5194,9 @@ app.post('/api/availability/status', requireDatabase, requireSession, rateLimit(
       error.code || 'ERROR',
       error.sqlMessage || error.message
     );
-    res.status(500).json({ message: 'Could not update your donor availability.' });
+    res.status(500).json({
+      message: 'Could not save your availability. No changes were saved. Please try again; if the problem continues, contact support.'
+    });
   }
 });
 
@@ -5071,7 +5394,6 @@ app.get('/api/donor/eligibility-portal', requireDatabase, requireSession, async 
       Number(donor.available) === 1 &&
       donor.availability_mode === 'general' &&
       Boolean(donor.public_contact_consent) &&
-      Boolean(donor.public_identity_consent) &&
       Number.isFinite(availabilityConfirmedAt) &&
       Number.isFinite(availabilityExpiresAt) &&
       availabilityExpiresAt > Date.now();
@@ -6064,32 +6386,26 @@ app.get('/api/donors/search', requireDatabase, requireSession, rateLimit(30, 60 
   if (req.user.role !== 'patient') {
     return res.status(403).json({ message: 'Patient accounts can search for available donors.' });
   }
-  const city = typeof req.query.city === 'string' ? req.query.city.trim() : '';
-  const area = typeof req.query.area === 'string' ? req.query.area.trim() : '';
-  const state = typeof req.query.state === 'string' ? req.query.state.trim() : '';
+  const city = normalizeLocationName(req.query.city);
+  const state = normalizeLocationName(req.query.state);
   const bloodGroup = normalizeBloodGroup(req.query.blood_group || '');
-  const radius = typeof req.query.radius_km === 'string' ? req.query.radius_km : '25';
   const requiredDate = typeof req.query.required_date === 'string' ? req.query.required_date : '';
+  const urgency = typeof req.query.urgency === 'string' ? req.query.urgency : '';
   const units = req.query.units === undefined ? null : Number(req.query.units);
-  const emergency = req.query.emergency === 'true';
-  const allowedRadii = new Set(['5', '10', '25', '50', 'wider']);
+  const emergency = urgency === 'Urgent' || req.query.emergency === 'true';
   const today = new Date().toISOString().slice(0, 10);
   if (!isNonEmptyString(city, 80) ||
-      !isNonEmptyString(state, 80) ||
+      (state && !isNonEmptyString(state, 80)) ||
       !BLOOD_GROUPS.has(bloodGroup) ||
-      !allowedRadii.has(radius) ||
-      (area && !isNonEmptyString(area, 100)) ||
       (requiredDate && (!isValidDateOnly(requiredDate) || requiredDate < today)) ||
       (units !== null && (!Number.isInteger(units) || units < 1 || units > 20)) ||
+      (urgency && !REQUEST_URGENCIES.has(urgency)) ||
       (req.query.emergency !== undefined && !['true', 'false'].includes(req.query.emergency))) {
     return res.status(400).json({ message: 'Choose a valid state, city/place, blood group, and optional search details.' });
   }
 
   try {
-    const locationFilter = radius === 'wider'
-      ? 'LOWER(d.state) = LOWER(?)'
-      : 'LOWER(d.city) = LOWER(?) AND LOWER(d.state) = LOWER(?)';
-    const locationValues = radius === 'wider' ? [state] : [city, state];
+    const stateFilter = state ? `AND ${normalizedLocationSql('d.state')} = LOWER(?)` : '';
     const dateAvailabilityFilter = requiredDate
       ? `(
            (COALESCE(d.availability_mode, 'general') = 'general'
@@ -6107,18 +6423,17 @@ app.get('/api/donors/search', requireDatabase, requireSession, rateLimit(30, 60 
       : `COALESCE(d.availability_mode, 'general') = 'general'
          AND COALESCE(d.availability_starts_at, d.last_confirmed_at) <= UTC_TIMESTAMP()
          AND d.availability_expires_at > UTC_TIMESTAMP()`;
-    const areaFilter = area
-      ? "AND LOWER(COALESCE(NULLIF(d.place, ''), NULLIF(u.place, ''), '')) = LOWER(?)"
-      : '';
     const [donors] = await db.execute(
-      `SELECT u.full_name AS display_name,
-              COALESCE(NULLIF(d.place, ''), NULLIF(u.place, '')) AS place,
+      `SELECT CAST(d.user_id AS CHAR) AS donor_user_id,
+              CASE WHEN d.public_identity_consent = 1 THEN u.full_name ELSE NULL END AS display_name,
+              CASE WHEN d.public_identity_consent = 1
+                THEN COALESCE(NULLIF(d.place, ''), NULLIF(u.place, ''))
+                ELSE NULL END AS place,
               d.blood_group, d.city, d.state,
               d.last_confirmed_at IS NOT NULL AS has_confirmation,
               1 AS confirmation_current,
               (${DONOR_ELIGIBILITY_SQL}) AS eligible_for_matching,
               d.public_contact_consent = 1 AS contact_consent,
-              d.public_identity_consent = 1 AS identity_consent,
               d.emergency_response_consent = 1 AS emergency_matching_enabled,
               CASE WHEN COALESCE(d.availability_mode, 'general') = 'selected_dates'
                 THEN 'Available on selected date' ELSE 'Available' END AS availability_status,
@@ -6131,46 +6446,84 @@ app.get('/api/donors/search', requireDatabase, requireSession, rateLimit(30, 60 
        JOIN users u ON u.user_id = d.user_id AND u.role = 'donor'
        WHERE d.available = 1
          AND d.public_contact_consent = 1
-         AND d.public_identity_consent = 1
          AND d.last_confirmed_at IS NOT NULL
          AND ${DONOR_ELIGIBILITY_SQL}
          AND d.blood_group IN (${getCompatibleDonorBloodGroups(bloodGroup).map(() => '?').join(', ')})
-         AND ${locationFilter}
+         AND ${normalizedLocationSql('d.city')} = LOWER(?)
+         ${stateFilter}
          AND ${dateAvailabilityFilter}
-         ${areaFilter}
        ORDER BY CASE WHEN ? = 1 THEN d.emergency_response_consent ELSE 0 END DESC,
                 d.last_confirmed_at DESC
        LIMIT 50`,
-      [requiredDate || null, ...getCompatibleDonorBloodGroups(bloodGroup), ...locationValues,
-        ...(requiredDate ? [requiredDate] : []), ...(area ? [area] : []), emergency ? 1 : 0]
+      [requiredDate || null, ...getCompatibleDonorBloodGroups(bloodGroup), city,
+        ...(state ? [state] : []), ...(requiredDate ? [requiredDate] : []), emergency ? 1 : 0]
     );
+    const matchingDonors = donors.filter(donor =>
+      areBloodGroupsCompatible(donor.blood_group, bloodGroup) &&
+      isAvailabilitySearchEligible({
+        state: 'available',
+        confirmed: Boolean(donor.has_confirmation),
+        current: Boolean(donor.confirmation_current),
+        eligible: Boolean(donor.eligible_for_matching),
+        contactConsent: Boolean(donor.contact_consent)
+      })
+    );
+    if (matchingDonors.length === 0) {
+      try {
+        const [diagnostics] = await db.execute(
+          `SELECT COUNT(*) AS location_and_blood_group_matches,
+                  COALESCE(SUM(d.available = 1), 0) AS marked_available,
+                  COALESCE(SUM(d.last_confirmed_at IS NOT NULL), 0) AS confirmed,
+                  COALESCE(SUM(d.public_contact_consent = 1), 0) AS search_consent,
+                  COALESCE(SUM(d.public_identity_consent = 1), 0) AS identity_display_consent,
+                  COALESCE(SUM(
+                    COALESCE(d.next_eligible_date,
+                      DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)) IS NULL
+                    OR COALESCE(d.next_eligible_date,
+                      DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)) <= UTC_DATE()
+                  ), 0) AS cooldown_clear,
+                  COALESCE(SUM(${DONOR_ELIGIBILITY_SQL}), 0) AS medically_eligible,
+                  COALESCE(SUM(${dateAvailabilityFilter}), 0) AS requested_schedule_matches
+           FROM donors d
+           JOIN users u ON u.user_id = d.user_id AND u.role = 'donor'
+           WHERE d.blood_group IN (${getCompatibleDonorBloodGroups(bloodGroup).map(() => '?').join(', ')})
+             AND ${normalizedLocationSql('d.city')} = LOWER(?)
+             ${stateFilter}`,
+          [...(requiredDate ? [requiredDate] : []),
+            ...getCompatibleDonorBloodGroups(bloodGroup), city,
+            ...(state ? [state] : [])]
+        );
+        console.warn('Patient donor search returned no matches:', JSON.stringify({
+          city,
+          state: state || null,
+          blood_group: bloodGroup,
+          required_date: requiredDate || null,
+          exclusions: diagnostics[0]
+        }));
+      } catch (diagnosticError) {
+        console.error('Patient donor search exclusion diagnostics failed:',
+          diagnosticError.code || diagnosticError.message);
+      }
+    }
     res.json({
-      donors: donors
-        .filter(donor =>
-          areBloodGroupsCompatible(donor.blood_group, bloodGroup) &&
-          isAvailabilitySearchEligible({
-            state: 'available',
-            confirmed: Boolean(donor.has_confirmation),
-            current: Boolean(donor.confirmation_current),
-            eligible: Boolean(donor.eligible_for_matching),
-            contactConsent: Boolean(donor.contact_consent),
-            identityConsent: Boolean(donor.identity_consent)
-          })
-        )
+      donors: matchingDonors
         .map(({
+          donor_user_id,
           has_confirmation,
           confirmation_current,
           eligible_for_matching,
           contact_consent,
-          identity_consent,
           ...donor
-        }) => donor),
+        }) => ({
+          ...donor,
+          contact_token: createDonorContactToken(donor_user_id, req.user.user_id)
+        })),
       checked_at: new Date().toISOString(),
-      search_area: radius === 'wider' ? `${state} (wider search)` : `${city}, ${state}`,
-      radius_km: radius === 'wider' ? null : Number(radius),
+      search_area: state ? `${city}, ${state}` : city,
+      radius_km: null,
       required_date: requiredDate || null,
-      area: area || null,
-      location_precision: 'Matches registered donor city/state; live GPS and calculated distance are not available.',
+      urgency: urgency || null,
+      location_precision: 'Matches normalized registered city names across all neighbourhoods; no live GPS or calculated distance is used.',
       distance_available: false,
       emergency_priority: emergency,
       units_requested: units
@@ -6185,9 +6538,8 @@ app.get('/api/availability', requireDatabase, requireSession, rateLimit(30, 60 *
   if (req.user.role !== 'patient') {
     return res.status(403).json({ message: 'Patient accounts can search for available donors.' });
   }
-  const city = typeof req.query.city === 'string' ? req.query.city.trim() : '';
-  const area = typeof req.query.area === 'string' ? req.query.area.trim() : '';
-  const state = typeof req.query.state === 'string' ? req.query.state.trim() : '';
+  const city = normalizeLocationName(req.query.city);
+  const state = normalizeLocationName(req.query.state);
   if (req.query.blood_group !== undefined && typeof req.query.blood_group !== 'string') {
     return res.status(400).json({ message: 'Select a valid blood group.' });
   }
@@ -6195,8 +6547,7 @@ app.get('/api/availability', requireDatabase, requireSession, rateLimit(30, 60 *
   if (
     !isNonEmptyString(city, 80) ||
     city.length < 2 ||
-    (area && !isNonEmptyString(area, 100)) ||
-    !isNonEmptyString(state, 80) ||
+    (state && !isNonEmptyString(state, 80)) ||
     !BLOOD_GROUPS.has(bloodGroup)
   ) {
     return res.status(400).json({ message: 'Enter a city and state, and select a blood group.' });
@@ -6206,26 +6557,27 @@ app.get('/api/availability', requireDatabase, requireSession, rateLimit(30, 60 *
     const filters = [
       'd.available = 1',
       'd.public_contact_consent = 1',
-      'd.public_identity_consent = 1',
       'd.last_confirmed_at IS NOT NULL',
       DONOR_ELIGIBILITY_SQL,
       "COALESCE(d.availability_mode, 'general') = 'general'",
       'COALESCE(d.availability_starts_at, d.last_confirmed_at) <= UTC_TIMESTAMP()',
       'd.availability_expires_at > UTC_TIMESTAMP()',
-      'LOWER(d.city) = LOWER(?)',
-      'LOWER(d.state) = LOWER(?)'
+      `${normalizedLocationSql('d.city')} = LOWER(?)`
     ];
-    const values = [city, state];
-    if (area) {
-      filters.push("LOWER(COALESCE(NULLIF(d.place, ''), NULLIF(u.place, ''), '')) = LOWER(?)");
-      values.push(area);
+    const values = [city];
+    if (state) {
+      filters.push(`${normalizedLocationSql('d.state')} = LOWER(?)`);
+      values.push(state);
     }
     const compatibleBloodGroups = getCompatibleDonorBloodGroups(bloodGroup);
     filters.push(`d.blood_group IN (${compatibleBloodGroups.map(() => '?').join(', ')})`);
     values.push(...compatibleBloodGroups);
     const [donors] = await db.execute(
-      `SELECT u.full_name AS name, d.blood_group, d.city, d.state,
-              COALESCE(NULLIF(d.place, ''), NULLIF(u.place, '')) AS place,
+      `SELECT CASE WHEN d.public_identity_consent = 1 THEN u.full_name ELSE NULL END AS name,
+              d.blood_group, d.city, d.state,
+              CASE WHEN d.public_identity_consent = 1
+                THEN COALESCE(NULLIF(d.place, ''), NULLIF(u.place, ''))
+                ELSE NULL END AS place,
               DATE_FORMAT(d.last_confirmed_at, '%Y-%m-%dT%H:%i:%sZ') AS last_confirmed_at,
               DATE_FORMAT(d.availability_expires_at, '%Y-%m-%dT%H:%i:%sZ') AS available_until
        FROM donors d

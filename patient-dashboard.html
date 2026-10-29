@@ -56,16 +56,17 @@
     <p class="muted" id="welcome">Checking your login…</p>
     <section class="card" aria-labelledby="donorSearchTitle">
       <h2 id="donorSearchTitle">Find blood · Live donor search</h2>
-      <p class="muted">Search by blood group, city, area, and state. Matches show registered details only when availability is current and the donor has opted in. Phone numbers are shared only after the donor accepts a specific request and separately consents. Exact home addresses are never shown.</p>
+      <p class="muted">Search by required blood group and registered city across all neighbourhoods. State and urgency are optional filters. Matches require current donor confirmation, eligibility, and search consent. Phone numbers are never shown here; a contact request uses the existing donor-response and explicit contact-sharing workflow.</p>
       <form id="patientDonorSearchForm">
         <div class="search-grid">
-          <div class="field"><label for="searchCity">City / place</label><input id="searchCity" value="Mysuru" required maxlength="80" placeholder="e.g. Bengaluru"></div>
-          <div class="field"><label for="searchArea">Area / locality (optional)</label><input id="searchArea" maxlength="100" placeholder="e.g. Kuvempunagar"></div>
-          <div class="field"><label for="searchState">State</label><input id="searchState" value="Karnataka" required maxlength="80"></div>
+          <div class="field"><label for="searchCity">City</label><input id="searchCity" value="Mysuru" required maxlength="80" placeholder="e.g. Bengaluru"></div>
+          <div class="field"><label for="searchState">State (optional)</label><input id="searchState" value="Karnataka" maxlength="80"></div>
           <div class="field"><label for="searchBloodGroup">Blood group needed</label><select id="searchBloodGroup" required><option value="">Choose group</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
+          <div class="field"><label for="searchUrgency">Urgency / priority (optional)</label><select id="searchUrgency"><option value="">Any urgency</option><option>Urgent</option><option>Within 24 hours</option><option>Planned</option></select></div>
           <div class="field"><label for="searchRequiredDate">Date needed (for donors with selected-date availability)</label><input id="searchRequiredDate" type="date"><span class="muted">Optional. Leave blank to search donors with a current general confirmation.</span></div>
         </div>
-        <p class="muted">Location matches the donor’s registered city/place and state; it is not live GPS. Search results are potential matches, not a medical compatibility decision. The treating blood bank or medical team must confirm compatibility and eligibility.</p>
+        <p class="muted">City matching ignores neighbourhood, capitalization, and extra spaces; donor area is shown only when the donor opted in to display their registered identity/location. This is not live GPS. Search results are potential matches, not a medical compatibility decision. The treating blood bank or medical team must confirm compatibility and eligibility.</p>
+        <p class="muted">Urgency changes priority for donors who opted in to emergency matching; it does not bypass search eligibility checks. A donor who has not opted in cannot be contacted through this emergency-request workflow.</p>
         <button id="searchDonorsButton" type="submit">Search confirmed donors</button>
       </form>
       <p class="message" id="donorSearchMessage" aria-live="polite">Choose a blood group to search.</p>
@@ -81,6 +82,9 @@
       <p class="muted">Urgent requests create in-app notifications for matching donors who explicitly opted into emergency matching. No SMS or email is sent.</p>
       <form id="patientEmergencyRequestForm">
         <input id="requestBlood" name="blood" type="hidden">
+        <input id="targetDonorUserId" name="target_donor_user_id" type="hidden">
+        <input id="contactTargetState" type="hidden">
+        <p class="muted" id="contactTargetSummary" hidden></p>
         <div class="request-grid">
           <div class="field"><label for="requestHospitalName">Hospital / blood bank name</label><input id="requestHospitalName" name="hospital_name" required maxlength="150"></div>
           <div class="field"><label for="requestHospitalAddress">Hospital address (optional)</label><input id="requestHospitalAddress" name="hospital_address" maxlength="180"></div>

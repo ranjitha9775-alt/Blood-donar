@@ -57,8 +57,18 @@
   }
 
   function showRoleMismatch(user) {
-    showLogin(`This page requires a ${requiredRole.replaceAll("_", " ")} account. You are signed in as ${user.role.replaceAll("_", " ")}. Log out and sign in with the correct account.`);
+    const roleLabel = requiredRole.replaceAll("_", " ");
+    const isPatientMismatch = requiredRole === "patient";
+    const patientDestination = returnUrl?.searchParams.get("open") === "request"
+      ? "Emergency Blood Request"
+      : "Live Donor Search";
+    showLogin(isPatientMismatch
+      ? `${patientDestination} requires a patient account. You are signed in as ${user.role.replaceAll("_", " ")}. Your account will not be changed; log out and sign in with an existing patient account.`
+      : `This page requires a ${roleLabel} account. You are signed in as ${user.role.replaceAll("_", " ")}. Log out and sign in with the correct account.`);
     switchAccountButton.hidden = false;
+    switchAccountButton.textContent = isPatientMismatch
+      ? "Switch to Patient Account"
+      : "Log out to switch accounts";
   }
 
   function showAvailability(user) {
@@ -99,6 +109,17 @@
       const data = await requestJson("/api/availability/status");
       document.getElementById("donorAvailabilityConsent").checked =
         data.is_available && data.public_contact_consent;
+      const startInput = document.getElementById("quickAvailabilityStart");
+      const endInput = document.getElementById("quickAvailabilityEnd");
+      const asLocalInput = value => {
+        const date = value ? new Date(value) : null;
+        if (!date || Number.isNaN(date.getTime())) return "";
+        return new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+          .toISOString().slice(0, 16);
+      };
+      startInput.value = asLocalInput(data.availability_starts_at);
+      endInput.value = asLocalInput(data.available_until);
+      updateQuickAvailabilityWindow();
       emergencyResponseConsent = data.emergency_response_consent;
       message.textContent = data.is_available
         ? `Your confirmation is current until ${new Date(data.available_until).toLocaleString()}.`
@@ -108,6 +129,21 @@
       message.textContent = error.message;
     }
   }
+
+  function updateQuickAvailabilityWindow() {
+    const enabled = document.getElementById("donorAvailabilityConsent").checked;
+    document.getElementById("quickAvailabilityWindow").hidden = !enabled;
+    document.getElementById("quickAvailabilityStart").required = enabled;
+    document.getElementById("quickAvailabilityEnd").required = enabled;
+    const now = new Date();
+    const localNow = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+      .toISOString().slice(0, 16);
+    document.getElementById("quickAvailabilityStart").min = localNow;
+    document.getElementById("quickAvailabilityEnd").min = localNow;
+  }
+
+  document.getElementById("donorAvailabilityConsent")
+    .addEventListener("change", updateQuickAvailabilityWindow);
 
   document.getElementById("loginForm").addEventListener("submit", async event => {
     event.preventDefault();
@@ -174,8 +210,9 @@
         data.donors.map(donor => {
           const availableUntil = new Date(donor.available_until);
           return `<article class="result-card">
-            <h3>${escapeHtml(donor.name)} · ${escapeHtml(donor.blood_group)}</h3>
-            <p>Registered city/area/state: ${escapeHtml(donor.city)}, ${escapeHtml(donor.place || "Area not provided")}, ${escapeHtml(donor.state)}</p>
+            <h3>${escapeHtml(donor.name || "Donor (name not shared)")} · ${escapeHtml(donor.blood_group)}</h3>
+            <p>Registered city/state: ${escapeHtml(donor.city)}, ${escapeHtml(donor.state)}</p>
+            ${donor.place ? `<p>Registered area: ${escapeHtml(donor.place)}</p>` : ""}
             <p>Available until ${escapeHtml(availableUntil.toLocaleString())}</p>
             <p>Last confirmed ${escapeHtml(new Date(donor.last_confirmed_at).toLocaleString())}. Phone numbers are shared only after this donor accepts a specific request and consents to contact sharing.</p>
           </article>`;
@@ -202,7 +239,27 @@
     const message = document.getElementById("donorAvailabilityMessage");
     button.disabled = true;
     message.textContent = "Updating your availability…";
+    updateQuickAvailabilityWindow();
+    if (!form.reportValidity()) {
+      button.disabled = false;
+      return;
+    }
     try {
+      const isAvailable = document.getElementById("donorAvailabilityConsent").checked;
+      const startDate = new Date(document.getElementById("quickAvailabilityStart").value);
+      const endDate = new Date(document.getElementById("quickAvailabilityEnd").value);
+      const startsAt = isAvailable && Number.isFinite(startDate.getTime())
+        ? startDate.toISOString()
+        : null;
+      const endsAt = isAvailable && Number.isFinite(endDate.getTime())
+        ? endDate.toISOString()
+        : null;
+      if (isAvailable && (!startsAt || !endsAt || Date.parse(startsAt) <= Date.now() ||
+          Date.parse(endsAt) <= Date.parse(startsAt))) {
+        message.textContent = "Enter a future start time and a later end time.";
+        button.disabled = false;
+        return;
+      }
       const data = await requestJson("/api/availability/status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -210,6 +267,7 @@
           status: document.getElementById("donorAvailabilityConsent").checked
             ? "available"
             : "not_available",
+          ...(isAvailable ? { starts_at: startsAt, ends_at: endsAt } : {}),
           public_contact_consent: document.getElementById("donorAvailabilityConsent").checked,
           emergency_response_consent: emergencyResponseConsent
         })
@@ -240,9 +298,13 @@
     switchAccountButton.disabled = true;
     try {
       await requestJson("/api/logout", { method: "POST" });
-      window.location.replace(returnUrl
-        ? `/login?next=${encodeURIComponent(`${returnUrl.pathname}${returnUrl.search}${returnUrl.hash}`)}&required_role=${encodeURIComponent(requiredRole || "")}`
-        : "/login");
+      const next = returnUrl
+        ? `${returnUrl.pathname}${returnUrl.search}${returnUrl.hash}`
+        : "";
+      const destination = new URL("/login", window.location.origin);
+      if (next) destination.searchParams.set("next", next);
+      if (requiredRole) destination.searchParams.set("required_role", requiredRole);
+      window.location.replace(destination.href);
     } catch (error) {
       console.error("Could not switch accounts:", error);
       loginMessage.textContent = error.message;
