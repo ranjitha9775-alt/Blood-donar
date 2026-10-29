@@ -55,6 +55,10 @@
     .request:first-child { border-top: 0; }
     .request-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 10px; }
     .request-actions button:last-child { background: #555d69; }
+    .availability-date-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 0; border-top: 1px solid var(--line); }
+    .availability-date-row:first-child { border-top: 0; }
+    .availability-date-choice { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; }
+    .availability-date-choice input { width: 20px; min-height: 20px; margin: 0; accent-color: #167447; }
     .button-secondary { min-height: 38px; background: white; color: var(--ink); border: 1px solid var(--line); }
     .button-secondary:hover { background: #f7f8fa; }
     .notification-unread { color: #a51f32; font-weight: 750; }
@@ -137,7 +141,7 @@
           </div>
           <div id="availabilityDateList" aria-live="polite"></div>
           <button id="saveAvailabilityDates" type="button">Save selected dates</button>
-          <p class="muted">Choose a future date and click Add date, or type a date and click Save selected dates to add and save it in one step. Each selected date is saved separately; a date does not mean you are available on other dates. Saved dates appear in the Admin Dashboard.</p>
+          <p class="muted">Add as many future dates as you need. Each date has its own checkbox, so you can mark multiple dates Available at once; uncheck a date to mark it unavailable. Click Save selected dates to save all choices. Saved dates appear in the Admin Dashboard.</p>
         </div>
         <label class="consent"><input id="publicContactConsent" type="checkbox"><span>Allow my confirmed blood group and registered city/state to appear in patient Live Donor Search. This must be enabled for patients to find me.</span></label>
         <label class="consent"><input id="publicIdentityConsent" type="checkbox"><span>Also show my registered name and saved area/locality in matching results. Location comes from my profile, not live GPS. If I have not saved an area, patients see that it was not provided. My phone, email, and exact address stay private unless I accept a specific request and separately consent to sharing my contact details.</span></label>

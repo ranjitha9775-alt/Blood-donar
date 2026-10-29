@@ -60,12 +60,13 @@
       <form id="patientDonorSearchForm">
         <div class="search-grid">
           <div class="field"><label for="searchCity">City</label><input id="searchCity" value="Mysuru" required maxlength="80" placeholder="e.g. Bengaluru"></div>
+          <div class="field"><label for="searchArea">Your area / locality (optional)</label><input id="searchArea" maxlength="100" placeholder="e.g. Whitefield, Jayanagar"></div>
           <div class="field"><label for="searchState">State (optional)</label><input id="searchState" value="Karnataka" maxlength="80"></div>
           <div class="field"><label for="searchBloodGroup">Blood group needed</label><select id="searchBloodGroup" required><option value="">Choose group</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
           <div class="field"><label for="searchUrgency">Urgency / priority (optional)</label><select id="searchUrgency"><option value="">Any urgency</option><option>Urgent</option><option>Within 24 hours</option><option>Planned</option></select></div>
           <div class="field"><label for="searchRequiredDate">Date needed (for donors with selected-date availability)</label><input id="searchRequiredDate" type="date"><span class="muted">Optional. Leave blank to search donors with a current general confirmation.</span></div>
         </div>
-        <p class="muted">City matching ignores neighbourhood, capitalization, and extra spaces; donor area is shown only when the donor opted in to display their registered identity/location. This is not live GPS. Search results are potential matches, not a medical compatibility decision. The treating blood bank or medical team must confirm compatibility and eligibility.</p>
+        <p class="muted">Enter your area/locality to prioritize matching donors registered in the same locality; other matching donors in the city remain available below them. City, state, and locality comparisons ignore capitalization and extra spaces. Donor area is shown only with the donor’s consent. This is not live GPS. Search results are potential matches, not a medical compatibility decision; the treating blood bank or medical team must confirm compatibility and eligibility.</p>
         <p class="muted">Urgency changes priority for donors who opted in to emergency matching; it does not bypass search eligibility checks. A donor who has not opted in cannot be contacted through this emergency-request workflow.</p>
         <button id="searchDonorsButton" type="submit">Search confirmed donors</button>
       </form>

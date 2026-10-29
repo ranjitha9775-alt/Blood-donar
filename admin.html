@@ -64,9 +64,9 @@
     .availability-badge { width: fit-content; min-width: 94px; padding: 4px 9px; border-radius: 999px; font-weight: 750; text-align: center; }
     .availability-badge.available { background: #e7f5ec; color: #176b38; }
     .availability-badge.not-available { background: #fdebed; color: #a51f32; }
-    .availability-badge.unconfirmed { background: #f0f1f4; color: #555b66; }
-    .availability-badge.expired { background: #fff1db; color: #85520b; }
     .availability-dates { min-width: 190px; white-space: pre-line; }
+    .availability-actions { min-width: 185px; }
+    .availability-actions button { min-height: 34px; margin: 0 6px 6px 0; padding: 5px 9px; font-size: 11px; }
     .status-line { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
     @media (max-width: 760px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .dashboard-bar { align-items: flex-start; flex-direction: column; } }
     @media (max-width: 420px) { .stats { gap: 8px; } .stat { padding: 13px; } .stat strong { font-size: 23px; } }
@@ -119,16 +119,17 @@
         <article class="stat"><span>Patient requests</span><strong id="requestCount">—</strong></article>
       </div>
       <section class="panel data-panel" id="donorManagement" aria-labelledby="donorManagementTitle">
-        <div class="data-heading"><h2 id="donorManagementTitle">Donor Management</h2><p class="muted">Registered donor profiles and current opt-in status</p></div>
+        <div class="data-heading"><h2 id="donorManagementTitle">Donor Management</h2><p class="muted">Availability is Available only when confirmation, current dates, search consent, cooldown, and medical eligibility all pass.</p></div>
         <div class="data-tools">
           <div class="filter-field"><label for="donorSearch">Search donors</label><input id="donorSearch" type="search" placeholder="Name, username, phone, city…"></div>
           <div class="filter-field"><label for="donorCityFilter">City</label><input id="donorCityFilter" type="search" placeholder="All cities"></div>
           <div class="filter-field"><label for="donorBloodFilter">Blood group</label><select id="donorBloodFilter"><option value="">All blood groups</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
-          <div class="filter-field"><label for="donorAvailabilityFilter">Availability</label><select id="donorAvailabilityFilter"><option value="">All donors</option><option>Available</option><option>Scheduled</option><option>Not Available</option><option>Temporarily Unavailable</option><option>Unconfirmed</option><option>Expired</option></select></div>
+          <div class="filter-field"><label for="donorAvailabilityFilter">Availability</label><select id="donorAvailabilityFilter"><option value="">All donors</option><option value="available">Available</option><option value="not_available">Not Available</option></select></div>
           <div class="filter-field"><label for="donorEligibilityFilter">Eligibility</label><select id="donorEligibilityFilter"><option value="">All statuses</option><option value="eligible">Eligible</option><option value="in_cooldown">In cooldown</option><option value="awaiting_review">Awaiting review</option></select></div>
           <span class="record-count" id="donorResultCount" aria-live="polite"></span>
         </div>
-        <div class="table-scroll"><table><thead><tr><th>Name</th><th>Username</th><th>Phone</th><th>Blood group</th><th>City</th><th>Area</th><th>Availability</th><th>Availability window</th><th>Last confirmed</th><th>Email</th><th>Last donation</th><th>Next review date</th><th>Eligibility</th><th>Latest eligibility review</th><th>Registered</th><th>Saved availability dates</th></tr></thead><tbody id="donorRows"><tr><td colspan="16">Loading donor records…</td></tr></tbody></table></div>
+        <p class="status-line" id="donorAvailabilityAdminMessage" aria-live="polite"></p>
+        <div class="table-scroll"><table><thead><tr><th>Name</th><th>Username</th><th>Phone</th><th>Blood group</th><th>City</th><th>Area</th><th>Availability</th><th>Availability window</th><th>Last confirmed</th><th>Email</th><th>Last donation</th><th>Next review date</th><th>Eligibility</th><th>Latest eligibility review</th><th>Registered</th><th>Saved availability dates</th><th>Admin availability review</th><th>Actions</th></tr></thead><tbody id="donorRows"><tr><td colspan="18">Loading donor records…</td></tr></tbody></table></div>
       </section>
       <section class="panel data-panel" id="donationManagement" aria-labelledby="donationManagementTitle">
         <div class="data-heading"><h2 id="donationManagementTitle">Verified Donation History</h2><p class="muted">Recording a completed donation disables matching; it does not grant future eligibility.</p></div>

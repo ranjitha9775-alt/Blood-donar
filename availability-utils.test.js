@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   isAvailabilitySearchEligible,
+  getAdminAvailabilityConfirmationBlocker,
   isValidUnavailabilityReason,
   isValidAvailabilityConfirmationHours,
   parseExpectedAvailability,
@@ -106,4 +107,54 @@ test("requires every confirmation, eligibility, and consent gate for search", ()
   for (const state of ["not_available", "temporarily_unavailable", "unconfirmed"]) {
     assert.equal(isAvailabilitySearchEligible({ ...eligible, state }), false);
   }
+});
+
+test("admin availability confirmation requires donor opt-in and full eligibility", () => {
+  const eligibleGeneralAvailability = {
+    availabilityState: "unconfirmed",
+    searchConsent: true,
+    cooldownClear: true,
+    medicallyEligible: true,
+    mode: "general",
+    validGeneralWindow: true,
+    validSelectedDates: false
+  };
+  assert.equal(getAdminAvailabilityConfirmationBlocker(eligibleGeneralAvailability), "");
+  assert.match(getAdminAvailabilityConfirmationBlocker({
+    ...eligibleGeneralAvailability,
+    availabilityState: "unavailable"
+  }), /awaiting confirmation/);
+  assert.match(getAdminAvailabilityConfirmationBlocker({
+    ...eligibleGeneralAvailability,
+    searchConsent: false
+  }), /opted into patient search/);
+  assert.match(getAdminAvailabilityConfirmationBlocker({
+    ...eligibleGeneralAvailability,
+    cooldownClear: false
+  }), /cooldown/);
+  assert.match(getAdminAvailabilityConfirmationBlocker({
+    ...eligibleGeneralAvailability,
+    medicallyEligible: false
+  }), /qualified-staff eligibility review/);
+});
+
+test("admin availability confirmation accepts selected-date schedules only with an available date", () => {
+  const eligibleSelectedDates = {
+    availabilityState: "unconfirmed",
+    searchConsent: true,
+    cooldownClear: true,
+    medicallyEligible: true,
+    mode: "selected_dates",
+    validGeneralWindow: false,
+    validSelectedDates: true
+  };
+  assert.equal(getAdminAvailabilityConfirmationBlocker(eligibleSelectedDates), "");
+  assert.match(getAdminAvailabilityConfirmationBlocker({
+    ...eligibleSelectedDates,
+    validSelectedDates: false
+  }), /valid future availability window/);
+  assert.match(getAdminAvailabilityConfirmationBlocker({
+    ...eligibleSelectedDates,
+    mode: "unavailable"
+  }), /valid future availability window/);
 });

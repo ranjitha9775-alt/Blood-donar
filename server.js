@@ -17,6 +17,7 @@ const {
 const { canAccessBloodBankPortal } = require('./authorization-utils');
 const {
   isAvailabilitySearchEligible,
+  getAdminAvailabilityConfirmationBlocker,
   isValidAvailabilityConfirmationHours,
   isValidUnavailabilityReason,
   parseExpectedAvailability,
@@ -156,6 +157,8 @@ AND EXISTS (
         )
     )
 )`;
+const DONOR_ADMIN_CONFIRM_ELIGIBILITY_SQL = DONOR_ELIGIBILITY_SQL
+  .replaceAll('d.last_confirmed_at >=', 'UTC_TIMESTAMP() >=');
 const DONOR_AVAILABILITY_STATUS_SQL = `CASE
   WHEN d.available = 1
        AND d.last_confirmed_at IS NOT NULL
@@ -204,6 +207,27 @@ const DONOR_AVAILABILITY_STATUS_SQL = `CASE
        AND REPLACE(REPLACE(LOWER(COALESCE(d.availability_status, '')), ' ', '_'), '-', '_')
            IN ('not_available', 'unavailable') THEN 'unavailable'
   ELSE 'unconfirmed'
+END`;
+const DONOR_ADMIN_DISPLAY_AVAILABILITY_SQL = `CASE
+  WHEN d.public_contact_consent = 1
+       AND d.available = 1
+       AND d.last_confirmed_at IS NOT NULL
+       AND ${DONOR_ELIGIBILITY_SQL}
+       AND (
+         (COALESCE(d.availability_mode, 'general') = 'general'
+           AND COALESCE(d.availability_starts_at, d.last_confirmed_at) <= UTC_TIMESTAMP()
+           AND d.availability_expires_at > UTC_TIMESTAMP())
+         OR
+         (COALESCE(d.availability_mode, 'general') = 'selected_dates'
+           AND EXISTS (
+             SELECT 1 FROM donor_availability_dates ad
+             WHERE ad.donor_user_id = d.user_id
+               AND ad.available_date = UTC_DATE()
+               AND ad.status = 'available'
+           ))
+       )
+    THEN 'available'
+  ELSE 'not_available'
 END`;
 const CAMPS = new Map([
   ['camp-demo-01', 'Community Care Donation Day'],
@@ -835,6 +859,22 @@ async function initializeDonationCoordinationSchema(userIdType) {
       CONSTRAINT fk_eligibility_request_donor FOREIGN KEY (donor_user_id)
         REFERENCES users (user_id) ON DELETE RESTRICT,
       CONSTRAINT fk_eligibility_request_admin FOREIGN KEY (reviewed_by_admin_id)
+        REFERENCES admin_users (admin_id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await db.query(
+    `CREATE TABLE IF NOT EXISTS admin_donor_availability_reviews (
+      review_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      donor_user_id ${userIdType} NOT NULL,
+      admin_id TINYINT UNSIGNED NOT NULL,
+      action ENUM('confirmed', 'rejected', 'revoked') NOT NULL,
+      reason VARCHAR(500) NULL,
+      reviewed_at DATETIME NOT NULL,
+      PRIMARY KEY (review_id),
+      KEY idx_admin_availability_review_donor (donor_user_id, reviewed_at),
+      CONSTRAINT fk_admin_availability_review_donor FOREIGN KEY (donor_user_id)
+        REFERENCES users (user_id) ON DELETE RESTRICT,
+      CONSTRAINT fk_admin_availability_review_admin FOREIGN KEY (admin_id)
         REFERENCES admin_users (admin_id) ON DELETE RESTRICT
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
   );
@@ -3835,8 +3875,10 @@ app.get('/api/admin/dashboard', requireDatabase, requireAdminConfigured, require
            (SELECT COUNT(*) FROM users WHERE role = 'donor') AS donor_count,
            (SELECT COUNT(*) FROM users WHERE role IN ('patient', 'recipient')) AS patient_count,
            ((SELECT COUNT(*) FROM patients) + (SELECT COUNT(*) FROM blood_requests)) AS patient_request_count,
-           (SELECT COUNT(*) FROM donors d WHERE (${DONOR_AVAILABILITY_STATUS_SQL}) = 'available') AS available_donor_count,
-           (SELECT COUNT(*) FROM donors d WHERE (${DONOR_AVAILABILITY_STATUS_SQL}) = 'unavailable') AS unavailable_donor_count,
+           (SELECT COUNT(*) FROM donors d
+            WHERE (${DONOR_ADMIN_DISPLAY_AVAILABILITY_SQL}) = 'available') AS available_donor_count,
+           (SELECT COUNT(*) FROM donors d
+            WHERE (${DONOR_ADMIN_DISPLAY_AVAILABILITY_SQL}) = 'not_available') AS unavailable_donor_count,
            (SELECT COUNT(*) FROM donors d WHERE (${DONOR_AVAILABILITY_STATUS_SQL}) = 'temporarily_unavailable') AS temporarily_unavailable_donor_count,
            (SELECT COUNT(*) FROM donors d WHERE (${DONOR_AVAILABILITY_STATUS_SQL}) = 'unconfirmed') AS unconfirmed_donor_count,
            (SELECT COUNT(*) FROM donors d WHERE (${DONOR_AVAILABILITY_STATUS_SQL}) = 'expired') AS expired_donor_count,
@@ -3864,9 +3906,29 @@ app.get('/api/admin/dashboard', requireDatabase, requireAdminConfigured, require
                   WHEN COALESCE(d.next_eligible_date,
                     DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)) > UTC_DATE()
                     THEN 'in_cooldown'
-                  WHEN (${DONOR_ELIGIBILITY_SQL}) THEN 'eligible'
+                  WHEN (${DONOR_ADMIN_CONFIRM_ELIGIBILITY_SQL}) THEN 'eligible'
                   ELSE 'awaiting_review'
                 END AS eligibility_status,
+                d.public_contact_consent AS availability_search_consent,
+                CASE WHEN d.public_contact_consent = 1
+                  AND (${DONOR_ADMIN_CONFIRM_ELIGIBILITY_SQL})
+                  AND (
+                    (COALESCE(d.availability_mode, 'general') = 'general'
+                      AND d.availability_starts_at IS NOT NULL
+                      AND d.availability_expires_at > UTC_TIMESTAMP()
+                      AND d.availability_expires_at > d.availability_starts_at
+                      AND d.availability_expires_at
+                        <= DATE_ADD(d.availability_starts_at, INTERVAL 366 DAY))
+                    OR
+                    (COALESCE(d.availability_mode, 'general') = 'selected_dates'
+                      AND EXISTS (
+                        SELECT 1 FROM donor_availability_dates confirm_date
+                        WHERE confirm_date.donor_user_id = d.user_id
+                          AND confirm_date.status = 'available'
+                          AND confirm_date.available_date >= UTC_DATE()
+                      ))
+                  )
+                  THEN 1 ELSE 0 END AS can_admin_confirm_availability,
                 (SELECT er.decision FROM donor_eligibility_reviews er
                  WHERE er.donor_user_id = d.user_id
                  ORDER BY er.reviewed_at DESC, er.review_id DESC LIMIT 1) AS eligibility_review_decision,
@@ -3880,16 +3942,14 @@ app.get('/api/admin/dashboard', requireDatabase, requireAdminConfigured, require
                  ORDER BY er.reviewed_at DESC, er.review_id DESC LIMIT 1) AS eligibility_reviewed_at,
                 DATE_FORMAT(d.last_confirmed_at, '%Y-%m-%dT%H:%i:%sZ') AS availability_confirmed_at,
                 ${DONOR_AVAILABILITY_STATUS_SQL} AS availability_status_code,
+                ${DONOR_ADMIN_DISPLAY_AVAILABILITY_SQL} AS availability_display_status,
                 CASE ${DONOR_AVAILABILITY_STATUS_SQL}
                   WHEN 'available' THEN 1 ELSE 0
                 END AS is_available,
-                CASE
-                  WHEN (${DONOR_AVAILABILITY_STATUS_SQL}) = 'available' THEN 'Available'
-                  WHEN (${DONOR_AVAILABILITY_STATUS_SQL}) = 'temporarily_unavailable' THEN 'Temporarily Unavailable'
-                  WHEN (${DONOR_AVAILABILITY_STATUS_SQL}) = 'unavailable' THEN 'Not Available'
-                  WHEN (${DONOR_AVAILABILITY_STATUS_SQL}) = 'expired' THEN 'Expired'
-                  WHEN (${DONOR_AVAILABILITY_STATUS_SQL}) = 'scheduled' THEN 'Scheduled'
-                  ELSE 'Unconfirmed'
+                d.available AS availability_flag,
+                CASE ${DONOR_ADMIN_DISPLAY_AVAILABILITY_SQL}
+                  WHEN 'available' THEN 'Available'
+                  ELSE 'Not Available'
                 END AS availability_status,
                 COALESCE(d.availability_mode, 'general') AS availability_mode,
                 (SELECT GROUP_CONCAT(
@@ -3901,7 +3961,17 @@ app.get('/api/admin/dashboard', requireDatabase, requireAdminConfigured, require
                 DATE_FORMAT(d.last_confirmed_at, '%Y-%m-%dT%H:%i:%sZ') AS last_confirmed_at,
                 DATE_FORMAT(d.availability_starts_at, '%Y-%m-%dT%H:%i:%sZ') AS availability_starts_at,
                 COALESCE(DATE_FORMAT(d.availability_expires_at, '%Y-%m-%dT%H:%i:%sZ'),
-                         DATE_FORMAT(d.available_until, '%Y-%m-%dT%H:%i:%sZ')) AS available_until
+                         DATE_FORMAT(d.available_until, '%Y-%m-%dT%H:%i:%sZ')) AS available_until,
+                (SELECT review.action FROM admin_donor_availability_reviews review
+                 WHERE review.donor_user_id = d.user_id
+                 ORDER BY review.reviewed_at DESC, review.review_id DESC LIMIT 1) AS admin_availability_action,
+                (SELECT review.reason FROM admin_donor_availability_reviews review
+                 WHERE review.donor_user_id = d.user_id
+                 ORDER BY review.reviewed_at DESC, review.review_id DESC LIMIT 1) AS admin_availability_reason,
+                (SELECT DATE_FORMAT(review.reviewed_at, '%Y-%m-%dT%H:%i:%sZ')
+                 FROM admin_donor_availability_reviews review
+                 WHERE review.donor_user_id = d.user_id
+                 ORDER BY review.reviewed_at DESC, review.review_id DESC LIMIT 1) AS admin_availability_reviewed_at
          FROM users u
          LEFT JOIN donors d ON d.user_id = u.user_id
          WHERE u.role = 'donor'
@@ -3996,6 +4066,127 @@ app.get('/api/admin/dashboard', requireDatabase, requireAdminConfigured, require
     res.status(500).json({ message: 'Could not load registrations from MySQL.' });
   }
 });
+
+app.patch('/api/admin/donors/:donorId/availability', requireDatabase, requireAdminConfigured,
+  requireAdmin, rateLimit(30, 60 * 60 * 1000), async (req, res) => {
+    const donorId = Number(req.params.donorId);
+    const action = req.body?.action;
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+    if (!Number.isSafeInteger(donorId) || donorId < 1 ||
+        !['confirm', 'reject', 'revoke'].includes(action) ||
+        reason.length > 500 ||
+        (action !== 'confirm' && !reason)) {
+      return res.status(400).json({
+        message: 'Choose a valid availability action and provide a reason for rejection or revocation (500 characters maximum).'
+      });
+    }
+
+    let connection;
+    try {
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+      const [[donor]] = await connection.execute(
+        `SELECT d.user_id, d.public_contact_consent, d.availability_mode,
+                d.last_confirmed_at, d.available,
+                (${DONOR_AVAILABILITY_STATUS_SQL}) AS current_availability_status,
+                (COALESCE(d.next_eligible_date,
+                  DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH))
+                  IS NULL
+                  OR COALESCE(d.next_eligible_date,
+                    DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH))
+                    <= UTC_DATE()) AS cooldown_clear,
+                (${DONOR_ADMIN_CONFIRM_ELIGIBILITY_SQL}) AS medically_eligible,
+                (COALESCE(d.availability_mode, 'general') = 'general'
+                  AND d.availability_starts_at IS NOT NULL
+                  AND d.availability_expires_at > UTC_TIMESTAMP()
+                  AND d.availability_expires_at > d.availability_starts_at
+                  AND d.availability_expires_at
+                    <= DATE_ADD(d.availability_starts_at, INTERVAL 366 DAY)) AS valid_general_window,
+                (COALESCE(d.availability_mode, 'general') = 'selected_dates'
+                  AND EXISTS (
+                    SELECT 1 FROM donor_availability_dates ad
+                    WHERE ad.donor_user_id = d.user_id
+                      AND ad.status = 'available'
+                      AND ad.available_date >= UTC_DATE()
+                  )) AS valid_selected_dates
+         FROM donors d
+         JOIN users u ON u.user_id = d.user_id AND u.role = 'donor'
+         WHERE d.user_id = ?
+         FOR UPDATE`,
+        [donorId]
+      );
+      if (!donor) {
+        await connection.rollback();
+        return res.status(404).json({ message: 'Donor account was not found.' });
+      }
+
+      if (action === 'confirm') {
+        const blocker = getAdminAvailabilityConfirmationBlocker({
+          availabilityState: donor.current_availability_status,
+          searchConsent: donor.public_contact_consent === 1,
+          cooldownClear: donor.cooldown_clear === 1,
+          medicallyEligible: donor.medically_eligible === 1,
+          mode: donor.availability_mode,
+          validGeneralWindow: donor.valid_general_window === 1,
+          validSelectedDates: donor.valid_selected_dates === 1
+        });
+        if (blocker) {
+          await connection.rollback();
+          return res.status(409).json({ message: blocker });
+        }
+        await connection.execute(
+          `UPDATE donors
+           SET available = 1, is_available = 1, availability_status = 'available',
+               last_confirmed_at = UTC_TIMESTAMP()
+           WHERE user_id = ?`,
+          [donorId]
+        );
+      } else {
+        if (action === 'reject' && donor.current_availability_status !== 'unconfirmed') {
+          await connection.rollback();
+          return res.status(409).json({ message: 'Only availability awaiting confirmation can be rejected.' });
+        }
+        if (action === 'reject' &&
+            ['available', 'scheduled'].includes(donor.current_availability_status)) {
+          await connection.rollback();
+          return res.status(409).json({ message: 'This donor has a current confirmation. Use revoke to withdraw it.' });
+        }
+        if (action === 'revoke' && !(donor.available === 1 && donor.last_confirmed_at)) {
+          await connection.rollback();
+          return res.status(409).json({ message: 'There is no active donor availability confirmation to revoke.' });
+        }
+        await connection.execute(
+          `UPDATE donors
+           SET available = 0, is_available = 0, availability_status = 'not_available',
+               availability_mode = 'unavailable'
+           WHERE user_id = ?`,
+          [donorId]
+        );
+      }
+
+      await connection.execute(
+        `INSERT INTO admin_donor_availability_reviews
+           (donor_user_id, admin_id, action, reason, reviewed_at)
+         VALUES (?, ?, ?, ?, UTC_TIMESTAMP())`,
+        [donorId, req.admin.admin_id, action === 'confirm' ? 'confirmed' : action === 'reject' ? 'rejected' : 'revoked',
+          reason || null]
+      );
+      await connection.commit();
+      res.json({
+        message: action === 'confirm'
+          ? 'Donor availability confirmed. Matching still requires the donor to meet current eligibility and consent checks.'
+          : action === 'reject'
+            ? 'Donor availability was rejected and the reason was recorded.'
+            : 'Donor availability was revoked and removed from patient search.'
+      });
+    } catch (error) {
+      if (connection) await connection.rollback().catch(() => {});
+      console.error('Admin donor availability review failed:', error.code || error.message);
+      res.status(500).json({ message: 'Could not update donor availability.' });
+    } finally {
+      if (connection) connection.release();
+    }
+  });
 
 app.get('/api/admin/donations', requireDatabase, requireAdminConfigured, requireAdmin, async (req, res) => {
   try {
@@ -6387,6 +6578,7 @@ app.get('/api/donors/search', requireDatabase, requireSession, rateLimit(30, 60 
     return res.status(403).json({ message: 'Patient accounts can search for available donors.' });
   }
   const city = normalizeLocationName(req.query.city);
+  const searchArea = normalizeLocationName(req.query.area);
   const state = normalizeLocationName(req.query.state);
   const bloodGroup = normalizeBloodGroup(req.query.blood_group || '');
   const requiredDate = typeof req.query.required_date === 'string' ? req.query.required_date : '';
@@ -6394,7 +6586,10 @@ app.get('/api/donors/search', requireDatabase, requireSession, rateLimit(30, 60 
   const units = req.query.units === undefined ? null : Number(req.query.units);
   const emergency = urgency === 'Urgent' || req.query.emergency === 'true';
   const today = new Date().toISOString().slice(0, 10);
-  if (!isNonEmptyString(city, 80) ||
+  if ((req.query.area !== undefined && typeof req.query.area !== 'string') ||
+      (req.query.state !== undefined && typeof req.query.state !== 'string') ||
+      !isNonEmptyString(city, 80) ||
+      (searchArea && !isNonEmptyString(searchArea, 100)) ||
       (state && !isNonEmptyString(state, 80)) ||
       !BLOOD_GROUPS.has(bloodGroup) ||
       (requiredDate && (!isValidDateOnly(requiredDate) || requiredDate < today)) ||
@@ -6452,11 +6647,18 @@ app.get('/api/donors/search', requireDatabase, requireSession, rateLimit(30, 60 
          AND ${normalizedLocationSql('d.city')} = LOWER(?)
          ${stateFilter}
          AND ${dateAvailabilityFilter}
-       ORDER BY CASE WHEN ? = 1 THEN d.emergency_response_consent ELSE 0 END DESC,
+       ORDER BY CASE
+                  WHEN ? = '' THEN 1
+                  WHEN ${normalizedLocationSql("COALESCE(NULLIF(d.place, ''), NULLIF(u.place, ''))")} = LOWER(?)
+                    THEN 0
+                  ELSE 1
+                END,
+                CASE WHEN ? = 1 THEN d.emergency_response_consent ELSE 0 END DESC,
                 d.last_confirmed_at DESC
        LIMIT 50`,
       [requiredDate || null, ...getCompatibleDonorBloodGroups(bloodGroup), city,
-        ...(state ? [state] : []), ...(requiredDate ? [requiredDate] : []), emergency ? 1 : 0]
+        ...(state ? [state] : []), ...(requiredDate ? [requiredDate] : []),
+        searchArea, searchArea, emergency ? 1 : 0]
     );
     const matchingDonors = donors.filter(donor =>
       areBloodGroupsCompatible(donor.blood_group, bloodGroup) &&
@@ -6468,6 +6670,7 @@ app.get('/api/donors/search', requireDatabase, requireSession, rateLimit(30, 60 
         contactConsent: Boolean(donor.contact_consent)
       })
     );
+    let searchDiagnostics = null;
     if (matchingDonors.length === 0) {
       try {
         const [diagnostics] = await db.execute(
@@ -6483,22 +6686,37 @@ app.get('/api/donors/search', requireDatabase, requireSession, rateLimit(30, 60 
                       DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)) <= UTC_DATE()
                   ), 0) AS cooldown_clear,
                   COALESCE(SUM(${DONOR_ELIGIBILITY_SQL}), 0) AS medically_eligible,
-                  COALESCE(SUM(${dateAvailabilityFilter}), 0) AS requested_schedule_matches
+                  COALESCE(SUM(${dateAvailabilityFilter}), 0) AS requested_schedule_matches,
+                  COALESCE(SUM(
+                    d.available = 1
+                    AND d.last_confirmed_at IS NOT NULL
+                    AND d.public_contact_consent = 1
+                    AND (
+                      COALESCE(d.next_eligible_date,
+                        DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)) IS NULL
+                      OR COALESCE(d.next_eligible_date,
+                        DATE_ADD(d.last_donation_date, INTERVAL ${DONATION_ELIGIBILITY_MONTHS} MONTH)) <= UTC_DATE()
+                    )
+                    AND (${dateAvailabilityFilter})
+                  ), 0) AS confirmed_searchable_cooldown_matches
            FROM donors d
            JOIN users u ON u.user_id = d.user_id AND u.role = 'donor'
            WHERE d.blood_group IN (${getCompatibleDonorBloodGroups(bloodGroup).map(() => '?').join(', ')})
              AND ${normalizedLocationSql('d.city')} = LOWER(?)
              ${stateFilter}`,
-          [...(requiredDate ? [requiredDate] : []),
+          [...(requiredDate ? [requiredDate, requiredDate] : []),
             ...getCompatibleDonorBloodGroups(bloodGroup), city,
             ...(state ? [state] : [])]
+        );
+        searchDiagnostics = Object.fromEntries(
+          Object.entries(diagnostics[0]).map(([key, value]) => [key, Number(value)])
         );
         console.warn('Patient donor search returned no matches:', JSON.stringify({
           city,
           state: state || null,
           blood_group: bloodGroup,
           required_date: requiredDate || null,
-          exclusions: diagnostics[0]
+          exclusions: searchDiagnostics
         }));
       } catch (diagnosticError) {
         console.error('Patient donor search exclusion diagnostics failed:',
@@ -6519,11 +6737,12 @@ app.get('/api/donors/search', requireDatabase, requireSession, rateLimit(30, 60 
           contact_token: createDonorContactToken(donor_user_id, req.user.user_id)
         })),
       checked_at: new Date().toISOString(),
-      search_area: state ? `${city}, ${state}` : city,
+      search_area: [city, state, searchArea].filter(Boolean).join(', '),
       radius_km: null,
       required_date: requiredDate || null,
+      search_diagnostics: searchDiagnostics,
       urgency: urgency || null,
-      location_precision: 'Matches normalized registered city names across all neighbourhoods; no live GPS or calculated distance is used.',
+      location_precision: 'Matches normalized registered city names across all neighbourhoods and prioritizes exact registered area when supplied; no live GPS or calculated distance is used.',
       distance_available: false,
       emergency_priority: emergency,
       units_requested: units

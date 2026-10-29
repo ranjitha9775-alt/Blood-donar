@@ -43,6 +43,8 @@
 
   function normalizeAvailabilityValue(value) {
     const normalized = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+    if (normalized === "confirmed") return "confirmed";
+    if (normalized === "ineligible") return "ineligible";
     if (normalized === "available") return "available";
     if (normalized === "scheduled") return "scheduled";
     if (normalized === "expired") return "expired";
@@ -95,12 +97,11 @@
   }
 
   function availabilityLabel(status) {
-    if (status === "available") return "Available";
-    if (status === "scheduled") return "Scheduled";
-    if (status === "unavailable") return "Not Available";
-    if (status === "temporarily_unavailable") return "Temporarily Unavailable";
-    if (status === "expired") return "Expired";
-    return "Unconfirmed";
+    return status === "available" ? "Available" : "Not Available";
+  }
+
+  function getAdminAvailabilityStatus(donor) {
+    return donor.availability_display_status === "available" ? "available" : "not_available";
   }
 
   function addRow(tbody, values, emptyMessage, cellClasses = []) {
@@ -135,12 +136,10 @@
     const bloodGroup = document.getElementById("donorBloodFilter").value;
     const city = document.getElementById("donorCityFilter").value.trim().toLowerCase();
     const eligibility = document.getElementById("donorEligibilityFilter").value;
-    const availability = normalizeAvailabilityValue(
-      document.getElementById("donorAvailabilityFilter").value
-    );
-    const filterByAvailability = document.getElementById("donorAvailabilityFilter").value !== "";
+    const availability = document.getElementById("donorAvailabilityFilter").value;
+    const filterByAvailability = availability !== "";
     const filtered = donors.filter(donor => {
-      const donorStatus = getDonorAvailabilityStatus(donor);
+      const donorStatus = getAdminAvailabilityStatus(donor);
       const searchable = [
         donor.full_name, donor.username, donor.phone, donor.blood_group,
         donor.city, donor.place, donor.state, donor.email
@@ -156,16 +155,21 @@
       ? "No donor accounts are registered."
       : "No donors match the selected filters.";
     addRow(document.getElementById("donorRows"), filtered.map(donor => {
-      const status = getDonorAvailabilityStatus(donor);
+      const status = getAdminAvailabilityStatus(donor);
       const formattedDates = donor.availability_dates
         ? donor.availability_dates
           .replace(/, /g, "\n")
           .replace(/: available\b/g, ": Available")
           .replace(/: unavailable\b/g, ": Not available")
         : "—";
-      const availabilityWindow = status === "scheduled"
-        ? `Starts ${formatDate(donor.availability_starts_at)} · ends ${formatDate(donor.available_until)}`
-        : formatDate(donor.available_until);
+      const availabilityWindow = donor.availability_mode === "selected_dates"
+        ? "Selected-date schedule"
+        : donor.availability_starts_at || donor.available_until
+          ? `Starts ${formatDate(donor.availability_starts_at)} · ends ${formatDate(donor.available_until)}`
+          : "—";
+      const adminReview = donor.admin_availability_action
+        ? `${donor.admin_availability_action}${donor.admin_availability_reason ? `: ${donor.admin_availability_reason}` : ""} · ${formatDate(donor.admin_availability_reviewed_at)}`
+        : "No admin availability review";
       return [
         donor.full_name,
         donor.username || "Legacy account",
@@ -184,20 +188,86 @@
           ? `${donor.eligibility_review_decision} by ${donor.eligibility_reviewed_by || "authorized staff"} · ${formatDate(donor.eligibility_reviewed_at)}`
           : "No authorized review",
         formatDate(donor.registered_at),
-        formattedDates
+        formattedDates,
+        adminReview,
+        ""
       ];
     }), emptyMessage, [
       "", "", "", "", "", "",
       values => {
-        const donor = filtered.find(item =>
-          item.full_name === values[0] &&
-          (item.username || "Legacy account") === values[1]
-        );
-        const status = getDonorAvailabilityStatus(donor || {});
-        return `availability-badge ${status === "unavailable" ? "not-available" : status}`;
+        return `availability-badge ${values[6] === "Not Available" ? "not-available" : "available"}`;
       },
-      "", "", "", "", "", "", "", "", "availability-dates"
+      "", "", "", "", "", "", "", "", "availability-dates", "", "availability-actions"
     ]);
+
+    const tbody = document.getElementById("donorRows");
+    Array.from(tbody.rows).forEach((row, index) => {
+      const donor = filtered[index];
+      if (!donor) return;
+      const cell = row.lastElementChild;
+      const currentStatus = getDonorAvailabilityStatus(donor);
+      if (donor.can_admin_confirm_availability && currentStatus === "unconfirmed") {
+        const confirmButton = document.createElement("button");
+        confirmButton.type = "button";
+        confirmButton.textContent = "Confirm Availability";
+        confirmButton.addEventListener("click", () =>
+          updateDonorAvailability(donor.user_id, "confirm")
+        );
+        cell.append(confirmButton);
+        const rejectButton = document.createElement("button");
+        rejectButton.type = "button";
+        rejectButton.className = "button-secondary";
+        rejectButton.textContent = "Reject";
+        rejectButton.addEventListener("click", () =>
+          updateDonorAvailability(donor.user_id, "reject")
+        );
+        cell.append(rejectButton);
+      } else if (donor.availability_flag && donor.last_confirmed_at &&
+          donor.availability_mode !== "unavailable") {
+        const revokeButton = document.createElement("button");
+        revokeButton.type = "button";
+        revokeButton.className = "button-secondary";
+        revokeButton.textContent = "Revoke Confirmation";
+        revokeButton.addEventListener("click", () =>
+          updateDonorAvailability(donor.user_id, "revoke")
+        );
+        cell.append(revokeButton);
+      } else {
+        cell.textContent = donor.eligibility_status !== "eligible"
+          ? "Eligibility approval required"
+          : Number(donor.availability_search_consent) !== 1
+            ? "Patient-search consent required"
+            : "Valid availability window/date required";
+      }
+    });
+  }
+
+  async function updateDonorAvailability(donorId, action) {
+    const message = document.getElementById("donorAvailabilityAdminMessage");
+    const reason = action === "confirm"
+      ? ""
+      : window.prompt(action === "reject"
+        ? "Enter the reason for rejecting this availability confirmation:"
+        : "Enter the reason for revoking this availability confirmation:");
+    if (action !== "confirm" && reason === null) return;
+    if (action !== "confirm" && !reason.trim()) {
+      message.textContent = "A reason is required for rejection or revocation.";
+      return;
+    }
+    message.textContent = action === "confirm"
+      ? "Checking donor consent, availability dates, cooldown, and eligibility…"
+      : "Recording the availability decision…";
+    try {
+      const result = await requestJson(`/api/admin/donors/${encodeURIComponent(donorId)}/availability`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, reason })
+      });
+      message.textContent = result.message;
+      await refreshDashboard();
+    } catch (error) {
+      message.textContent = error.message;
+    }
   }
 
   function renderPatients() {

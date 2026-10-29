@@ -102,16 +102,21 @@ function renderAvailabilityDates() {
     .sort((left, right) => left.date.localeCompare(right.date))
     .map(item => {
       const row = document.createElement("div");
-      row.className = "request";
-      const label = makeTextElement("span", `${item.date} · ${item.status === "available" ? "Available" : "Not available"}`);
-      const toggle = makeTextElement("button",
-        item.status === "available" ? "Mark unavailable" : "Mark available");
-      toggle.type = "button";
-      toggle.className = "button-secondary";
-      toggle.addEventListener("click", () => {
-        item.status = item.status === "available" ? "unavailable" : "available";
+      row.className = "availability-date-row";
+      const label = document.createElement("label");
+      label.className = "availability-date-choice";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = item.status === "available";
+      checkbox.setAttribute("aria-label", `Available to donate on ${item.date}`);
+      checkbox.addEventListener("change", () => {
+        item.status = checkbox.checked ? "available" : "unavailable";
         renderAvailabilityDates();
       });
+      label.append(
+        checkbox,
+        makeTextElement("span", `${item.date} · ${item.status === "available" ? "Available" : "Not available"}`)
+      );
       const remove = makeTextElement("button", "Remove date");
       remove.type = "button";
       remove.className = "button-secondary";
@@ -119,7 +124,7 @@ function renderAvailabilityDates() {
         selectedAvailabilityDates = selectedAvailabilityDates.filter(date => date.date !== item.date);
         renderAvailabilityDates();
       });
-      row.append(label, toggle, remove);
+      row.append(label, remove);
       return row;
     });
   container.replaceChildren(...rows);
@@ -718,6 +723,8 @@ async function searchPatientDonors(event, isRefresh = false) {
     city: document.getElementById("searchCity").value.trim().replace(/\s+/g, " "),
     blood_group: document.getElementById("searchBloodGroup").value
   });
+  const searchArea = document.getElementById("searchArea").value.trim().replace(/\s+/g, " ");
+  if (searchArea) params.set("area", searchArea);
   const searchState = document.getElementById("searchState").value.trim().replace(/\s+/g, " ");
   const urgency = document.getElementById("searchUrgency").value;
   if (searchState) params.set("state", searchState);
@@ -731,18 +738,53 @@ async function searchPatientDonors(event, isRefresh = false) {
       message.textContent = `No donors passed the current matching checks · Checked ${formatDashboardDate(data.checked_at)}.`;
       document.getElementById("requestBlood").value = document.getElementById("searchBloodGroup").value;
       document.getElementById("requestCity").value = document.getElementById("searchCity").value.trim();
+      const diagnostics = data.search_diagnostics;
+      let reason = requiredDate
+        ? "No donor matched the blood-group compatibility, registered city/state, current confirmation for that date, donor-sharing consent, and eligibility checks."
+        : "No donor matched the blood-group compatibility, registered city/state, current general confirmation, donor-sharing consent, and eligibility checks.";
+      if (diagnostics) {
+        const reasons = [];
+        if (diagnostics.location_and_blood_group_matches === 0) {
+          reasons.push("No registered donors in this city/state have a compatible blood group.");
+        } else {
+          if (diagnostics.marked_available === 0) {
+            reasons.push("Matching donors have not confirmed that they are currently available.");
+          } else if (diagnostics.confirmed === 0) {
+            reasons.push("Matching donors have no availability confirmation recorded.");
+          }
+          if (diagnostics.search_consent === 0) {
+            reasons.push("No matching donor has opted into patient search.");
+          }
+          if (diagnostics.cooldown_clear === 0) {
+            reasons.push("Matching donors remain within the donation waiting period.");
+          }
+          if (diagnostics.requested_schedule_matches === 0) {
+            reasons.push(requiredDate
+              ? "No matching donor has confirmed availability on the selected date."
+              : "No matching donor has a current general availability window.");
+          }
+          if (diagnostics.medically_eligible === 0 &&
+              diagnostics.confirmed_searchable_cooldown_matches > 0) {
+            const count = diagnostics.confirmed_searchable_cooldown_matches;
+            reasons.push(
+              `${count} compatible donor${count === 1 ? " has" : "s have"} confirmed availability, opted into search, and passed the donation waiting period, but cannot appear until a qualified staff member clears the current health screening and eligibility review.`
+            );
+          } else if (diagnostics.medically_eligible === 0) {
+            reasons.push("Matching donors still need current screening clearance and qualified-staff eligibility approval.");
+          }
+        }
+        if (reasons.length) reason = reasons.join(" ");
+      }
       const empty = makeTextElement(
         "p",
-        requiredDate
-          ? "No donor matched the blood-group compatibility, registered city/state, current confirmation for that date, donor-sharing consent, and eligibility checks. Confirm the entered details or check reported blood-bank stock and official e-RaktKosh."
-          : "No donor matched the blood-group compatibility, registered city/state, current general confirmation, donor-sharing consent, and eligibility checks. Donors who selected specific dates are included when you search for one of those dates. Confirm the entered details or check reported blood-bank stock and official e-RaktKosh."
+        `${reason} ${!requiredDate ? "Donors who selected specific dates are included when you search for one of those dates. " : ""}Confirm the entered details or check reported blood-bank stock and official e-RaktKosh.`
       );
       results.replaceChildren(empty);
       if (!isRefresh) await searchLocalBloodInventory();
       return;
     }
     message.textContent =
-      `${data.donors.length} currently confirmed match(es) · Checked ${formatDashboardDate(data.checked_at)}. ${data.location_precision}`;
+      `${data.donors.length} currently confirmed match(es) · Checked ${formatDashboardDate(data.checked_at)}. ${searchArea ? `Same-locality donors are prioritized; other matches in ${data.search_area} follow. ` : ""}${data.location_precision}`;
     const cards = data.donors.map(donor => {
       const card = document.createElement("article");
       card.className = "search-result";

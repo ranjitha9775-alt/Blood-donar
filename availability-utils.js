@@ -76,8 +76,30 @@ function isAvailabilitySearchEligible({
     contactConsent === true;
 }
 
+function getAdminAvailabilityConfirmationBlocker({
+  availabilityState,
+  searchConsent,
+  cooldownClear,
+  medicallyEligible,
+  mode,
+  validGeneralWindow,
+  validSelectedDates
+}) {
+  if (availabilityState !== "unconfirmed") {
+    return "Only availability that is awaiting confirmation can be confirmed.";
+  }
+  if (searchConsent !== true) return "The donor has not opted into patient search.";
+  if (cooldownClear !== true || medicallyEligible !== true) {
+    return "The donor must complete the donation cooldown, current screening, and qualified-staff eligibility review.";
+  }
+  if (mode === "general" && validGeneralWindow === true) return "";
+  if (mode === "selected_dates" && validSelectedDates === true) return "";
+  return "The donor must have a valid future availability window or at least one saved available date.";
+}
+
 module.exports = {
   isAvailabilitySearchEligible,
+  getAdminAvailabilityConfirmationBlocker,
   isValidUnavailabilityReason,
   isValidAvailabilityConfirmationHours,
   parseExpectedAvailability,
