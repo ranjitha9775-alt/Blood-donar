@@ -33,11 +33,9 @@
     .status-label.not-available { color: #454b55; background: #e7e9ee; }
     .status-label.needs-confirmation { color: #765400; background: #fff2cc; }
     .choice-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
-    .availability-window { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
     .availability-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 18px 0; }
-    .availability-toggle { min-width: 180px; border-radius: 999px; background: #e7e9ee; color: #454b55; }
+    .availability-toggle { min-width: 180px; border-radius: 999px; background: #167447; color: #fff; }
     .availability-toggle.available { background: #167447; color: #fff; }
-    .availability-toggle .toggle-icon { margin-right: 7px; font-size: 18px; }
     .availability-current { margin: 0; font-weight: 750; }
     dialog { width: min(520px, calc(100% - 28px)); max-height: 90vh; overflow: auto; padding: 22px; border: 1px solid var(--line); border-radius: 16px; color: var(--ink); box-shadow: 0 18px 60px #10182840; }
     dialog h2 { margin-bottom: 8px; }
@@ -55,10 +53,6 @@
     .request:first-child { border-top: 0; }
     .request-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 10px; }
     .request-actions button:last-child { background: #555d69; }
-    .availability-date-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 0; border-top: 1px solid var(--line); }
-    .availability-date-row:first-child { border-top: 0; }
-    .availability-date-choice { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; }
-    .availability-date-choice input { width: 20px; min-height: 20px; margin: 0; accent-color: #167447; }
     .button-secondary { min-height: 38px; background: white; color: var(--ink); border: 1px solid var(--line); }
     .button-secondary:hover { background: #f7f8fa; }
     .notification-unread { color: #a51f32; font-weight: 750; }
@@ -66,7 +60,7 @@
     .request-details p { margin: 7px 0; }
     .safety { padding: 12px 14px; border-left: 3px solid #e1aa29; background: #fff8e6; color: #5c4a1d; font-size: 13px; }
     [hidden] { display: none !important; }
-    @media (max-width: 520px) { .card { padding: 17px; } .choice-list, .availability-window { grid-template-columns: 1fr; } .nav { align-items: flex-start; padding: 12px 0; } }
+    @media (max-width: 520px) { .card { padding: 17px; } .nav { align-items: flex-start; padding: 12px 0; } }
   </style>
 </head>
 <body data-notification-role="donor">
@@ -83,7 +77,7 @@
     <h1>Donor dashboard</h1>
     <p class="muted" id="welcome">Checking your login…</p>
     <p class="muted" id="donorBloodGroupSummary" hidden>Your registered blood group: <strong id="donorBloodGroupValue"></strong></p>
-    <p class="muted">Use your availability control to update your live status and scheduled window.</p>
+    <p class="muted">Choose Available or Not Available. Your saved status is separate from medical eligibility.</p>
 
     <section class="card" id="donationHistoryCard" aria-labelledby="donationHistoryTitle" hidden>
       <h2 id="donationHistoryTitle">Donation History</h2>
@@ -110,42 +104,20 @@
 
     <section class="card" id="availabilityCard" aria-labelledby="availabilityTitle" hidden>
       <h2 id="availabilityTitle">My Donation Availability</h2>
-      <p class="muted">Set whether you are available to donate. General availability runs only between the start and end times you choose; the default window is 24 hours. Times are entered in your browser’s local timezone and stored in UTC. This records availability only; donors do not enter blood-unit quantities. Unknown, not-yet-started, or expired confirmations are not matched.</p>
+      <p class="muted">Your status is saved in LifeDrop. Each Available confirmation remains current for 42 hours; select Available again to renew it. Availability is not medical clearance, and patients see you only when you have also opted in to search sharing.</p>
       <div class="status-panel">
-        <div><strong>Current status</strong><br><span class="status-label" id="availabilityStatus">Loading…</span><p class="availability-current" id="availabilityCurrentMessage" aria-live="polite">Checking your live status…</p></div>
+        <div><strong>Current availability</strong><br><span class="status-label" id="availabilityStatus">Loading…</span><p class="availability-current" id="availabilityCurrentMessage" aria-live="polite">Checking your saved status…</p></div>
         <div><strong>Last confirmed</strong><br><time class="muted" id="lastConfirmedAt">Not confirmed yet</time></div>
       </div>
       <div class="availability-controls">
-        <button id="availabilityToggle" class="availability-toggle" type="button" aria-pressed="false"><span class="toggle-icon" aria-hidden="true">✓</span><span class="toggle-label">Available</span></button>
+        <button id="availabilityToggle" class="availability-toggle" type="button">Available</button>
         <button id="notAvailableButton" class="button-secondary" type="button">Not Available</button>
-        <button id="updateAvailabilityButton" class="button-secondary" type="button">Update Availability</button>
-        <button id="temporarilyUnavailable" class="button-secondary" type="button">Temporarily Unavailable</button>
       </div>
-      <p class="muted" id="availabilityWindowSummary">Availability dates have not been set.</p>
       <div>
-        <div class="field">
-          <label for="availabilityMode">Availability schedule</label>
-          <select id="availabilityMode">
-            <option value="general">Generally Available (confirmation expires)</option>
-            <option value="selected_dates">Available on Selected Dates</option>
-          </select>
-        </div>
-        <div id="generalAvailabilityWindow" hidden></div>
-        <div id="selectedDateControls" hidden>
-          <div class="field">
-            <label for="availabilityDate">Choose a date you can donate</label>
-            <div class="choice-list">
-              <input id="availabilityDate" type="date">
-              <button id="addAvailabilityDate" class="button-secondary" type="button">Add date</button>
-            </div>
-          </div>
-          <div id="availabilityDateList" aria-live="polite"></div>
-          <button id="saveAvailabilityDates" type="button">Save selected dates</button>
-          <p class="muted">Add as many future dates as you need. Each date has its own checkbox, so you can mark multiple dates Available at once; uncheck a date to mark it unavailable. Click Save selected dates to save all choices. Saved dates appear in the Admin Dashboard.</p>
-        </div>
         <label class="consent"><input id="publicContactConsent" type="checkbox"><span>Allow my confirmed blood group and registered city/state to appear in patient Live Donor Search. This must be enabled for patients to find me.</span></label>
-        <label class="consent"><input id="publicIdentityConsent" type="checkbox"><span>Also show my registered name and saved area/locality in matching results. Location comes from my profile, not live GPS. If I have not saved an area, patients see that it was not provided. My phone, email, and exact address stay private unless I accept a specific request and separately consent to sharing my contact details.</span></label>
-        <label class="consent"><input id="emergencyResponseConsent" type="checkbox"><span>Optional: allow my current availability status and last-confirmed time to be shown for matching urgent requests in my city and blood group. I may choose whether to respond to each request.</span></label>
+        <label class="consent"><input id="publicIdentityConsent" type="checkbox"><span>Also show my registered name and saved area/locality in matching results. Location comes from my profile, not live GPS. If I have not saved an area, patients see that it was not provided. My phone and email stay private unless I separately enable phone sharing or accept a specific request and consent to share my contact details.</span></label>
+        <label class="consent"><input id="publicPhoneConsent" type="checkbox"><span>Optional: show my phone number in Live Donor Availability while I am Available and have enabled patient search. Patients can see it directly; I can withdraw this consent here.</span></label>
+        <label class="consent"><input id="emergencyResponseConsent" type="checkbox"><span>Optional: receive matching urgent blood requests for my blood group and city, even when I have marked myself Not Available. I choose whether to confirm each request. This does not change my normal availability, bypass medical clearance, or override a cooldown; donors who are medically restricted are not matched.</span></label>
         <p class="message" id="availabilityMessage" aria-live="polite"></p>
         <p class="message" id="donorMatchingReadiness" aria-live="polite"></p>
       </div>
@@ -154,7 +126,7 @@
     <dialog id="unavailabilityDialog" aria-labelledby="unavailabilityDialogTitle">
       <form id="unavailabilityForm">
         <h2 id="unavailabilityDialogTitle">Update Your Availability</h2>
-        <p class="muted">Choose why you are currently unavailable. Your selection is saved privately with your donor record.</p>
+        <p class="muted">Choose an optional private reason. Marking yourself Not Available immediately removes you from matching.</p>
         <fieldset class="reason-options">
           <legend class="field"><strong>Reason</strong></legend>
           <label class="reason-option"><input type="radio" name="unavailabilityReason" value="recently_donated" required><span>🩸 Recently donated blood</span></label>
@@ -169,32 +141,10 @@
           <p class="muted">This date will be sent for authorized verification. It will not be treated as verified until staff confirms it.</p>
         </div>
         <p class="muted" id="verifiedDonationDateMessage" hidden></p>
-        <div class="availability-window">
-          <div class="field"><label for="expectedAvailableDate">Expected available-from date (optional)</label><input id="expectedAvailableDate" type="date"></div>
-          <div class="field"><label for="expectedAvailableTime">Expected available-from time (optional)</label><input id="expectedAvailableTime" type="time"></div>
-        </div>
         <p class="message" id="unavailabilityMessage" aria-live="polite"></p>
         <div class="dialog-actions">
           <button class="button-secondary" id="cancelUnavailability" type="button">Cancel</button>
           <button id="confirmNotAvailable" type="submit">Confirm Not Available</button>
-        </div>
-      </form>
-    </dialog>
-
-    <dialog id="availabilityDialog" aria-labelledby="availabilityDialogTitle">
-      <form id="availabilityWindowForm">
-        <h2 id="availabilityDialogTitle">Update Availability</h2>
-        <p class="muted">Choose when your availability starts and ends. Your local times are converted to UTC for storage. You will not appear in searches unless you also meet the donation and medical eligibility requirements.</p>
-        <div class="availability-window">
-          <div class="field"><label for="availabilityStartDate">Start date</label><input id="availabilityStartDate" type="date" required></div>
-          <div class="field"><label for="availabilityStartTime">Start time</label><input id="availabilityStartTime" type="time" required></div>
-          <div class="field"><label for="availabilityEndDate">End date</label><input id="availabilityEndDate" type="date" required></div>
-          <div class="field"><label for="availabilityEndTime">End time</label><input id="availabilityEndTime" type="time" required></div>
-        </div>
-        <p class="message" id="availabilityWindowMessage" aria-live="polite"></p>
-        <div class="dialog-actions">
-          <button class="button-secondary" id="cancelAvailabilityUpdate" type="button">Cancel</button>
-          <button id="saveAvailabilityWindow" type="submit">Save availability</button>
         </div>
       </form>
     </dialog>

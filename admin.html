@@ -119,7 +119,7 @@
         <article class="stat"><span>Patient requests</span><strong id="requestCount">—</strong></article>
       </div>
       <section class="panel data-panel" id="donorManagement" aria-labelledby="donorManagementTitle">
-        <div class="data-heading"><h2 id="donorManagementTitle">Donor Management</h2><p class="muted">Availability is Available only when confirmation, current dates, search consent, cooldown, and medical eligibility all pass.</p></div>
+        <div class="data-heading"><h2 id="donorManagementTitle">Donor Management</h2><p class="muted">Availability reflects the donor’s confirmation and current availability window. Search consent and medical eligibility are shown separately and do not change the availability status.</p></div>
         <div class="data-tools">
           <div class="filter-field"><label for="donorSearch">Search donors</label><input id="donorSearch" type="search" placeholder="Name, username, phone, city…"></div>
           <div class="filter-field"><label for="donorCityFilter">City</label><input id="donorCityFilter" type="search" placeholder="All cities"></div>
@@ -183,12 +183,13 @@
           <div class="filter-field"><label for="patientSearch">Search patients</label><input id="patientSearch" type="search" placeholder="Name, username, phone, city…"></div>
           <div class="filter-field"><label for="patientBloodFilter">Required blood group</label><select id="patientBloodFilter"><option value="">All blood groups</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
           <div class="filter-field"><label for="patientUrgencyFilter">Urgency</label><select id="patientUrgencyFilter"><option value="">All urgency levels</option><option>Urgent</option><option>Within 24 hours</option><option>Planned</option></select></div>
-          <div class="filter-field"><label for="patientStatusFilter">Request status</label><select id="patientStatusFilter"><option value="">All statuses</option><option>Pending</option><option>Pending Verification</option><option>Under Review</option><option>Fulfilled</option><option>Cancelled</option></select></div>
+          <div class="filter-field"><label for="patientStatusFilter">Request status</label><select id="patientStatusFilter"><option value="">All statuses</option><option>Pending</option><option>Pending Verification</option><option>Under Review</option><option>Confirmed</option><option>Not Confirmed</option><option>Fulfilled</option><option>Cancelled</option></select></div>
           <span class="record-count" id="patientResultCount" aria-live="polite"></span>
         </div>
         <div class="table-scroll"><table><thead><tr><th>Name</th><th>Username</th><th>Phone</th><th>Required blood group</th><th>City</th><th>Area</th><th>Urgency</th><th>Request status</th><th>Email</th><th>Hospital / units</th><th>Registered</th></tr></thead><tbody id="patientRows"></tbody></table></div>
-        <div class="data-heading"><h2>All patient and blood requests</h2><p class="muted">Includes legacy requests and later website requests</p></div>
-        <div class="table-scroll"><table><thead><tr><th>Request type</th><th>Patient / contact</th><th>Age / gender</th><th>Blood group</th><th>Hospital</th><th>City / area</th><th>Contact phone</th><th>Units</th><th>Urgency / status</th><th>Donor response progress</th><th>Requested</th><th>Needed by</th></tr></thead><tbody id="requestRows"></tbody></table></div>
+        <div class="data-heading"><h2>All patient and blood requests</h2><p class="muted">Includes legacy requests and later website requests. Request status is separate from donor response and blood receipt.</p></div>
+        <p class="status-line" id="requestStatusAdminMessage" aria-live="polite"></p>
+        <div class="table-scroll"><table><thead><tr><th>Request type</th><th>Patient / contact</th><th>Age / gender</th><th>Blood group</th><th>Hospital</th><th>City / area</th><th>Contact phone</th><th>Units</th><th>Urgency / request status</th><th>Donor response status (separate)</th><th>Patient confirmation status</th><th>Requested</th><th>Needed by</th><th>Admin action</th></tr></thead><tbody id="requestRows"></tbody></table></div>
       </section>
     </section>
   </main>

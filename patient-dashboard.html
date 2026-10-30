@@ -31,6 +31,13 @@
     input, select { min-height: 42px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink); font: inherit; }
     .search-result { padding: 15px 0; border-top: 1px solid var(--line); }
     .search-result:first-child { border-top: 0; }
+    .live-availability { margin-top: 18px; padding: 16px; border: 2px solid #c6283d; border-radius: 12px; background: #fffafa; }
+    .live-availability-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+    .live-donor-result { padding: 14px 0; border-top: 1px solid var(--line); }
+    .live-donor-result:first-child { border-top: 0; }
+    .live-donor-result h3 { margin: 0 0 6px; font-size: 17px; }
+    .live-donor-result p { margin: 3px 0; }
+    .request-status-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
     .message { min-height: 20px; color: var(--muted); }
     .links { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
     .links a { color: var(--red); text-decoration: underline; }
@@ -55,8 +62,8 @@
     <h1>Patient dashboard</h1>
     <p class="muted" id="welcome">Checking your login…</p>
     <section class="card" aria-labelledby="donorSearchTitle">
-      <h2 id="donorSearchTitle">Find blood · Live donor search</h2>
-      <p class="muted">Search by required blood group and registered city across all neighbourhoods. State and urgency are optional filters. Matches require current donor confirmation, eligibility, and search consent. Phone numbers are never shown here; a contact request uses the existing donor-response and explicit contact-sharing workflow.</p>
+      <h2 id="donorSearchTitle">Find blood · Donor search</h2>
+      <p class="muted">Use your selected blood group and registered city/area to find donors who have confirmed they are Available and consented to appear. Availability is self-reported and is not medical clearance; a treating blood bank must confirm eligibility and compatibility.</p>
       <form id="patientDonorSearchForm">
         <div class="search-grid">
           <div class="field"><label for="searchCity">City</label><input id="searchCity" value="Mysuru" required maxlength="80" placeholder="e.g. Bengaluru"></div>
@@ -68,8 +75,19 @@
         </div>
         <p class="muted">Enter your area/locality to prioritize matching donors registered in the same locality; other matching donors in the city remain available below them. City, state, and locality comparisons ignore capitalization and extra spaces. Donor area is shown only with the donor’s consent. This is not live GPS. Search results are potential matches, not a medical compatibility decision; the treating blood bank or medical team must confirm compatibility and eligibility.</p>
         <p class="muted">Urgency changes priority for donors who opted in to emergency matching; it does not bypass search eligibility checks. A donor who has not opted in cannot be contacted through this emergency-request workflow.</p>
-        <button id="searchDonorsButton" type="submit">Search confirmed donors</button>
+        <button id="searchDonorsButton" type="submit">Search emergency coordination matches</button>
       </form>
+      <section class="live-availability" aria-labelledby="liveDonorAvailabilityTitle">
+        <div class="live-availability-header">
+          <div>
+            <h2 id="liveDonorAvailabilityTitle">Live Donor Availability</h2>
+            <p class="muted">Only currently Available donors matching the selected blood group and location are listed. Names, areas, and phone numbers appear only when the donor has consented to share them.</p>
+          </div>
+          <button id="refreshLiveDonorsButton" type="button">Refresh availability</button>
+        </div>
+        <p class="message" id="liveDonorAvailabilityMessage" aria-live="polite">Choose a blood group and location to see live availability.</p>
+        <div id="liveDonorAvailabilityResults" aria-live="polite"></div>
+      </section>
       <p class="message" id="donorSearchMessage" aria-live="polite">Choose a blood group to search.</p>
       <div id="donorSearchResults" aria-live="polite"></div>
       <div class="links">
@@ -80,7 +98,7 @@
     </section>
     <section class="card" id="patientRequestCard" aria-labelledby="patientRequestTitle" hidden>
       <h2 id="patientRequestTitle">Send emergency request</h2>
-      <p class="muted">Urgent requests create in-app notifications for matching donors who explicitly opted into emergency matching. No SMS or email is sent.</p>
+      <p class="muted">This form is available only when Live Donor Availability finds no matching available donors. Urgent requests create in-app notifications for donors who explicitly opted into emergency matching. No SMS or email is sent. Donor availability is not medical clearance.</p>
       <form id="patientEmergencyRequestForm">
         <input id="requestBlood" name="blood" type="hidden">
         <input id="targetDonorUserId" name="target_donor_user_id" type="hidden">
@@ -99,7 +117,8 @@
         </div>
         <label class="consent"><input id="requestMatchDonors" name="match_donors" type="checkbox" checked><span>Notify matching donors in the app if this is an urgent request.</span></label>
         <label class="consent"><input name="consent" type="checkbox" required><span>I consent to securely storing and using these details to process this blood request. The hospital address and my contact details are not shared with matched donors.</span></label>
-        <button id="sendEmergencyRequestButton" type="submit">Save request and notify matching donors</button>
+        <label class="consent"><input id="confirmEmergencyRequest" type="checkbox" required><span>I reviewed these details and confirm that LifeDrop may save this emergency request.</span></label>
+        <button id="sendEmergencyRequestButton" type="submit">Confirm and Submit Emergency Request</button>
         <p class="message" id="patientRequestMessage" aria-live="polite"></p>
         <div id="requestMatchingBanks" aria-live="polite"></div>
       </form>
@@ -113,8 +132,12 @@
       <p><a href="https://eraktkosh.mohfw.gov.in/eraktkoshPortal/" target="_blank" rel="noopener noreferrer">Open official e-RaktKosh portal</a></p>
     </section>
     <section class="card" id="patientRequestStatusCard" aria-labelledby="patientRequestStatusTitle" hidden>
-      <h2 id="patientRequestStatusTitle">Request Coordination Updates</h2>
-      <p class="muted">Updates appear only after an authorized coordinator or blood bank records them. Submitted, accepted, in-progress, and fulfilled are distinct states; submission does not mean an organization accepted the request.</p>
+      <div class="request-status-header">
+        <h2 id="patientRequestStatusTitle">Your Emergency Requests</h2>
+        <button id="refreshPatientRequestsButton" type="button">Refresh request statuses</button>
+      </div>
+      <p class="muted">Donor responses, donor selection, coordinator status, and overall request status are separate. Use “Confirm Blood Received” only after the blood has actually been received; donor confirmation or selection does not fulfill a request.</p>
+      <p class="muted">Donor names appear only when the donor consented to share their details. Request updates refresh automatically; use the manual refresh button whenever needed.</p>
       <div id="patientRequestStatuses" aria-live="polite">Loading requests…</div>
       <p class="message" id="patientRequestStatusMessage" aria-live="polite"></p>
     </section>

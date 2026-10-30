@@ -317,7 +317,22 @@
       }))
     ].sort((left, right) => Date.parse(right.request_date) - Date.parse(left.request_date));
 
-    addRow(document.getElementById("requestRows"), allRequests.map(request => [
+    function donorResponseStatus(request) {
+      if (request.request_type !== "Blood request") return "No in-app donor notifications";
+      const accepted = Number(request.donors_accepted || 0);
+      const pending = Number(request.responses_pending || 0);
+      const declined = Number(request.donors_declined_or_busy || 0);
+      const noResponse = Number(request.responses_no_response || 0);
+      const statuses = [];
+      if (accepted) statuses.push(`Donor Confirmed: ${accepted}`);
+      if (pending) statuses.push(`Waiting for Donor Response: ${pending}`);
+      if (declined) statuses.push(`Donor Declined: ${declined}`);
+      if (noResponse) statuses.push(`No response: ${noResponse}`);
+      return statuses.length ? statuses.join(" · ") : "No eligible donors notified";
+    }
+
+    const requestRows = document.getElementById("requestRows");
+    addRow(requestRows, allRequests.map(request => [
       request.request_type,
       request.contact_name && request.contact_name !== request.patient_name
         ? `${request.contact_name} / ${request.patient_name}`
@@ -328,13 +343,77 @@
       [request.city, request.area].filter(Boolean).join(", "),
       request.contact_number,
       request.units_required,
-      `${request.urgency ?? "—"} / ${request.request_status}`,
+      `${request.urgency ?? "—"} / ${
+        String(request.request_status || "").toLowerCase() === "confirmed"
+          ? "Request Confirmed"
+          : String(request.request_status || "").toLowerCase() === "not confirmed"
+            ? "Request Not Confirmed"
+            : request.request_status
+      }`,
+      donorResponseStatus(request),
       request.request_type === "Blood request"
-        ? `${request.donors_notified} notified · ${request.donors_accepted} accepted · ${request.responses_pending} pending · ${request.donors_declined_or_busy} busy/declined · ${request.responses_no_response} no response`
-        : "No in-app donor notifications",
+        ? `${request.patient_confirmation_status || "Not confirmed"}${request.patient_confirmed_at ? ` · ${formatDate(request.patient_confirmed_at)}` : ""}`
+        : "Not applicable",
       formatDate(request.request_date),
-      formatDate(request.needed_at)
+      formatDate(request.needed_at),
+      ""
     ]), "No patient requests are registered.");
+    [...requestRows.rows].forEach((row, index) => {
+      const request = allRequests[index];
+      const actionsCell = row.lastElementChild;
+      if (!request || request.request_type !== "Blood request" || !actionsCell) return;
+      const currentStatus = String(request.request_status || "").toLowerCase();
+      if (["pending", "pending verification", "under review", "open", "confirmed", "not confirmed"].includes(currentStatus)) {
+        const confirmButton = document.createElement("button");
+        confirmButton.className = "button button-secondary";
+        confirmButton.type = "button";
+        confirmButton.textContent = "Confirm Request";
+        confirmButton.disabled = currentStatus === "confirmed";
+        confirmButton.addEventListener("click", () =>
+          updateBloodRequestConfirmation(request.request_id, "Confirmed", confirmButton)
+        );
+        const notConfirmedButton = document.createElement("button");
+        notConfirmedButton.className = "button button-secondary";
+        notConfirmedButton.type = "button";
+        notConfirmedButton.textContent = "Mark Not Confirmed";
+        notConfirmedButton.disabled = currentStatus === "not confirmed";
+        notConfirmedButton.addEventListener("click", () =>
+          updateBloodRequestConfirmation(request.request_id, "Not Confirmed", notConfirmedButton)
+        );
+        actionsCell.append(confirmButton, document.createTextNode(" "), notConfirmedButton);
+      } else {
+        actionsCell.textContent = request.request_status || "—";
+      }
+    });
+  }
+
+  async function updateBloodRequestConfirmation(requestId, status, button) {
+    const message = document.getElementById("requestStatusAdminMessage");
+    button.disabled = true;
+    message.textContent = `${status === "Confirmed" ? "Confirming" : "Marking not confirmed"} request ${requestId}…`;
+    try {
+      const result = await requestJson(
+        `/api/admin/blood-requests/${encodeURIComponent(requestId)}/confirm`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status })
+        }
+      );
+      if (dashboardData) {
+        dashboardData.blood_requests = dashboardData.blood_requests.map(request =>
+          String(request.request_id) === String(requestId)
+            ? { ...request, request_status: status }
+            : request
+        );
+        renderRequests(dashboardData);
+      }
+      message.textContent = result.message;
+      await refreshDashboard();
+    } catch (error) {
+      message.textContent = error.message;
+      button.disabled = false;
+    }
   }
 
   async function refreshDonations() {

@@ -1,7 +1,7 @@
 (() => {
       "use strict";
   const registeredCampIds = new Set();
-  const requestStatuses = ["Pending Verification", "Under Review", "Fulfilled", "Cancelled"];
+  const requestStatuses = ["Pending Verification", "Under Review", "Cancelled"];
   let bloodRequests = [];
   let requestAuthorized = false;
   let requestUser = null;
@@ -280,7 +280,7 @@
         }
         list.innerHTML = `<div class="panel-title"><h3>Recent requests</h3><span class="live-tag">Shared board</span></div>${bloodRequests.map(request => {
           const requestLabel = `LD-${request.request_id}`;
-          const statusControl = request.is_owner
+          const statusControl = request.is_owner && request.status !== "Fulfilled"
             ? `<label class="request-status-control">Your status<select data-request-status="${escapeHtml(request.request_id)}" data-current-status="${escapeHtml(request.status)}" aria-label="Update status for request ${escapeHtml(requestLabel)}">${requestStatuses.map(status => `<option value="${escapeHtml(status)}"${status === request.status ? " selected" : ""}>${escapeHtml(status)}</option>`).join("")}</select></label>`
             : `<span class="status">${escapeHtml(request.status)}</span>`;
           return `<article class="request-row">

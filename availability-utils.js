@@ -6,6 +6,8 @@ const AVAILABILITY_STATES = new Set([
   "temporarily_unavailable"
 ]);
 const MAX_AVAILABILITY_WINDOW_MS = 366 * 24 * 60 * 60 * 1000;
+const AVAILABILITY_CONFIRMATION_HOURS = 42;
+const AVAILABILITY_CONFIRMATION_MS = AVAILABILITY_CONFIRMATION_HOURS * 60 * 60 * 1000;
 const UNAVAILABILITY_REASONS = new Set([
   "recently_donated",
   "health_reasons",
@@ -15,7 +17,18 @@ const UNAVAILABILITY_REASONS = new Set([
 ]);
 
 function isValidAvailabilityConfirmationHours(value) {
-  return value === 24;
+  return value === AVAILABILITY_CONFIRMATION_HOURS;
+}
+
+function getDefaultAvailabilityWindow(now = Date.now()) {
+  const startsAt = new Date(now);
+  if (!Number.isFinite(startsAt.getTime())) {
+    throw new RangeError("A valid time is required for a default availability window.");
+  }
+  return {
+    startsAt,
+    endsAt: new Date(startsAt.getTime() + AVAILABILITY_CONFIRMATION_MS)
+  };
 }
 
 function parseAvailabilityWindow(startAt, endAt, now = Date.now()) {
@@ -100,6 +113,7 @@ function getAdminAvailabilityConfirmationBlocker({
 module.exports = {
   isAvailabilitySearchEligible,
   getAdminAvailabilityConfirmationBlocker,
+  getDefaultAvailabilityWindow,
   isValidUnavailabilityReason,
   isValidAvailabilityConfirmationHours,
   parseExpectedAvailability,

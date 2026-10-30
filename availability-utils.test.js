@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const {
   isAvailabilitySearchEligible,
   getAdminAvailabilityConfirmationBlocker,
+  getDefaultAvailabilityWindow,
   isValidUnavailabilityReason,
   isValidAvailabilityConfirmationHours,
   parseExpectedAvailability,
@@ -12,11 +13,18 @@ const {
   normalizeAvailabilityState
 } = require("./availability-utils");
 
-test("availability confirmations use a fixed 24-hour period", () => {
-  assert.equal(isValidAvailabilityConfirmationHours(24), true);
+test("availability confirmations use a fixed 42-hour period", () => {
+  assert.equal(isValidAvailabilityConfirmationHours(42), true);
   assert.equal(isValidAvailabilityConfirmationHours(4), false);
-  assert.equal(isValidAvailabilityConfirmationHours(12), false);
-  assert.equal(isValidAvailabilityConfirmationHours("24"), false);
+  assert.equal(isValidAvailabilityConfirmationHours(24), false);
+  assert.equal(isValidAvailabilityConfirmationHours("42"), false);
+});
+
+test("default availability confirmations receive a server-managed 42-hour window", () => {
+  const now = Date.parse("2026-10-29T10:00:00.000Z");
+  const window = getDefaultAvailabilityWindow(now);
+  assert.equal(window.startsAt.toISOString(), "2026-10-29T10:00:00.000Z");
+  assert.equal(window.endsAt.toISOString(), "2026-10-31T04:00:00.000Z");
 });
 
 test("validates scheduled availability windows and serializes them in UTC", () => {
